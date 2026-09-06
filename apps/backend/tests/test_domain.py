@@ -75,6 +75,25 @@ class DomainRulesTests(unittest.TestCase):
         self.assertIsNone(projected_commitment_date(row, 2027, 8))
         self.assertIsNone(projected_commitment_date(row, 2027, 9))
 
+    def test_installment_projection_advances_progress_without_recording(self):
+        row = {
+            "commitment_type": "installment",
+            "frequency": "monthly",
+            "due_rule": "fixed_day",
+            "due_day": 10,
+            "due_month": None,
+            "starts_on": date(2026, 9, 10),
+            "next_due_on": date(2026, 9, 10),
+            "ends_on": None,
+            "current_installment": 1,
+            "total_installments": 4,
+        }
+        self.assertEqual(projected_commitment_date(row, 2026, 10), date(2026, 10, 10))
+        from apps.backend.app.domain.commitments import projected_installment_number
+
+        self.assertEqual(projected_installment_number(row, 2026, 10), 2)
+        self.assertIsNone(projected_commitment_date(row, 2027, 1))
+
     def test_allocation_supports_percentage_fixed_and_overage(self):
         percentage = calculate_allocation(
             Decimal("2000.00"), BudgetAllocationMode.PERCENTAGE, Decimal("50"), None, Decimal("200.00")

@@ -58,6 +58,18 @@ def first_commitment_occurrence(
 
 def projected_commitment_date(row: dict, year: int, month: int) -> date | None:
     """Return the occurrence of a commitment inside the requested month."""
+    projection = projected_commitment(row, year, month)
+    return projection[0] if projection else None
+
+
+def projected_installment_number(row: dict, year: int, month: int) -> int | None:
+    """Return the installment number projected for a month, when applicable."""
+    projection = projected_commitment(row, year, month)
+    return projection[1] if projection else None
+
+
+def projected_commitment(row: dict, year: int, month: int) -> tuple[date, int | None] | None:
+    """Return an occurrence and its installment number for a requested month."""
     baseline = row["next_due_on"]
     target_start, _ = month_bounds(year, month)
     baseline_start, _ = month_bounds(baseline.year, baseline.month)
@@ -65,7 +77,25 @@ def projected_commitment_date(row: dict, year: int, month: int) -> date | None:
         return None
 
     if row["commitment_type"] == "installment":
-        return baseline if baseline.year == year and baseline.month == month else None
+        if row["frequency"] == "yearly":
+            if month != commitment_due_month(row):
+                return None
+            periods = year - baseline.year
+        else:
+            periods = (year - baseline.year) * 12 + month - baseline.month
+        installment_number = (row.get("current_installment") or 1) + periods
+        total_installments = row.get("total_installments")
+        if periods < 0 or not total_installments or installment_number > total_installments:
+            return None
+        if row["due_rule"] == "business_day":
+            projected = business_day_date(year, month, row["business_day_number"])
+        else:
+            projected = fixed_commitment_date(year, month, commitment_due_day(row))
+        if projected is None or projected < row["starts_on"]:
+            return None
+        if row["ends_on"] and projected > row["ends_on"]:
+            return None
+        return projected, installment_number
 
     if row["frequency"] == "monthly":
         if row["due_rule"] == "business_day":
@@ -86,7 +116,7 @@ def projected_commitment_date(row: dict, year: int, month: int) -> date | None:
         return None
     if row["ends_on"] and projected > row["ends_on"]:
         return None
-    return projected
+    return projected, None
 
 
 def next_projected_commitment_date(row: dict, from_date: date) -> date | None:
@@ -95,7 +125,7 @@ def next_projected_commitment_date(row: dict, from_date: date) -> date | None:
         return row["next_due_on"] if row["next_due_on"] >= from_date else None
 
     year, month = from_date.year, from_date.month
-    for _ in range(24):
+    for _ in range(120):
         projected = projected_commitment_date(row, year, month)
         if projected and projected >= from_date:
             return projected

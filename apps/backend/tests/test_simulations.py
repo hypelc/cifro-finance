@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from apps.backend.app.domain.simulations import calculate_simulation_totals
 from apps.backend.app.schemas import SimulationCreate, SimulationItemCreate
+from apps.backend.app.schemas import UserSettingsUpdate
 
 
 class SimulationDomainTests(unittest.TestCase):
@@ -50,6 +51,25 @@ class SimulationSchemaTests(unittest.TestCase):
     def test_item_requires_positive_amount(self):
         with self.assertRaises(ValidationError):
             SimulationItemCreate(description="Compra", direction="expense", amount="-10")
+
+    def test_opening_balance_requires_a_complete_reference(self):
+        settings = UserSettingsUpdate(
+            auto_confirm_income=False,
+            default_due_rule="fixed_day",
+            default_business_day_number=5,
+            opening_year=2026,
+            opening_month=9,
+            opening_balance=Decimal("1000.00"),
+        )
+        self.assertEqual(settings.opening_balance, Decimal("1000.00"))
+        with self.assertRaises(ValidationError):
+            UserSettingsUpdate(
+                auto_confirm_income=False,
+                default_due_rule="fixed_day",
+                default_business_day_number=5,
+                opening_year=2026,
+                opening_balance=Decimal("1000.00"),
+            )
 
 
 if __name__ == "__main__":

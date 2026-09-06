@@ -348,6 +348,9 @@ class UserSettingsRead(BaseModel):
     auto_confirm_income: bool
     default_due_rule: CommitmentDueRule
     default_business_day_number: int
+    opening_year: int | None = Field(default=None, ge=2000, le=2100)
+    opening_month: int | None = Field(default=None, ge=1, le=12)
+    opening_balance: Decimal | None = Field(default=None, max_digits=12, decimal_places=2)
     updated_at: datetime
 
 
@@ -355,6 +358,16 @@ class UserSettingsUpdate(BaseModel):
     auto_confirm_income: bool
     default_due_rule: CommitmentDueRule
     default_business_day_number: int = Field(gt=0, le=31)
+    opening_year: int | None = Field(default=None, ge=2000, le=2100)
+    opening_month: int | None = Field(default=None, ge=1, le=12)
+    opening_balance: Decimal | None = Field(default=None, max_digits=12, decimal_places=2)
+
+    @model_validator(mode="after")
+    def validate_opening_balance(self):
+        values = (self.opening_year, self.opening_month, self.opening_balance)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("Opening balance requires year, month and amount")
+        return self
 
 
 class BudgetSettingsUpdate(BaseModel):
@@ -427,8 +440,11 @@ class BudgetDashboardRead(BaseModel):
 
 
 class DashboardPeriod(BaseModel):
+    opening_balance: Decimal
     income: Decimal
     expenses: Decimal
+    net_result: Decimal
+    ending_balance: Decimal
     available: Decimal
 
 
@@ -440,6 +456,8 @@ class CommitmentPreview(BaseModel):
     commitment_type: str
     next_due_on: date
     category_name: str | None = None
+    installment_number: int | None = None
+    total_installments: int | None = None
 
 
 class DashboardRead(BaseModel):
@@ -450,3 +468,4 @@ class DashboardRead(BaseModel):
     next_month_commitments: list[CommitmentPreview]
     recent_transactions: list[TransactionRead]
     budget: BudgetDashboardRead | None = None
+    balance_anchor: str | None = None

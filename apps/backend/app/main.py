@@ -31,6 +31,7 @@ from .domain.commitments import (
     next_commitment_due_date,
     next_projected_commitment_date,
     projected_commitment_date,
+    projected_installment_number,
 )
 from .domain.budgets import calculate_allocation
 from .domain.simulations import calculate_simulation_totals
@@ -160,6 +161,39 @@ router = APIRouter(
 
 def as_money(value: Decimal | None) -> Decimal:
     return value or Decimal("0.00")
+
+
+def balance_opening_for_period(connection, user_id: UUID, year: int, month: int) -> tuple[Decimal, str | None]:
+    """Calculate the opening balance from one explicit user anchor."""
+    anchor = connection.execute(
+        """
+        select opening_year, opening_month, opening_balance
+        from public.user_settings
+        where user_id = %s
+        """,
+        (user_id,),
+    ).fetchone()
+    if not anchor or any(anchor[field] is None for field in ("opening_year", "opening_month", "opening_balance")):
+        return Decimal("0.00"), None
+
+    anchor_year = anchor["opening_year"]
+    anchor_month = anchor["opening_month"]
+    if (year, month) < (anchor_year, anchor_month):
+        return Decimal("0.00"), None
+
+    anchor_start, _ = month_bounds(anchor_year, anchor_month)
+    target_start, _ = month_bounds(year, month)
+    previous_result = connection.execute(
+        """
+        select coalesce(sum(case when direction = 'income' then amount else -amount end), 0) as total
+        from public.transactions
+        where user_id = %s and status = 'completed'
+          and occurred_on >= %s and occurred_on < %s
+        """,
+        (user_id, anchor_start, target_start),
+    ).fetchone()
+    opening = as_money(anchor["opening_balance"]) + as_money(previous_result["total"])
+    return opening, f"{anchor_year:04d}-{anchor_month:02d}"
 
 
 IMPORT_MAX_BYTES = 10 * 1024 * 1024
@@ -685,7 +719,8 @@ def get_user_settings(user_id: UUID = Depends(current_user_id)) -> dict:
         row = connection.execute(
             """
             select auto_confirm_income, default_due_rule,
-              default_business_day_number, updated_at
+              default_business_day_number, opening_year, opening_month,
+              opening_balance, updated_at
             from public.user_settings
             where user_id = %s
             """,
@@ -697,7 +732,8 @@ def get_user_settings(user_id: UUID = Depends(current_user_id)) -> dict:
                 insert into public.user_settings (user_id)
                 values (%s)
                 returning auto_confirm_income, default_due_rule,
-                  default_business_day_number, updated_at
+                  default_business_day_number, opening_year, opening_month,
+                  opening_balance, updated_at
                 """,
                 (user_id,),
             ).fetchone()
@@ -714,22 +750,30 @@ def update_user_settings(
             """
             insert into public.user_settings (
               user_id, auto_confirm_income, default_due_rule,
-              default_business_day_number, updated_at
+              default_business_day_number, opening_year, opening_month,
+              opening_balance, updated_at
             )
-            values (%s, %s, %s, %s, now())
+            values (%s, %s, %s, %s, %s, %s, %s, now())
             on conflict (user_id) do update set
               auto_confirm_income = excluded.auto_confirm_income,
               default_due_rule = excluded.default_due_rule,
               default_business_day_number = excluded.default_business_day_number,
+              opening_year = excluded.opening_year,
+              opening_month = excluded.opening_month,
+              opening_balance = excluded.opening_balance,
               updated_at = now()
             returning auto_confirm_income, default_due_rule,
-              default_business_day_number, updated_at
+              default_business_day_number, opening_year, opening_month,
+              opening_balance, updated_at
             """,
             (
                 user_id,
                 payload.auto_confirm_income,
                 payload.default_due_rule.value,
                 payload.default_business_day_number,
+                payload.opening_year,
+                payload.opening_month,
+                payload.opening_balance,
             ),
         ).fetchone()
     return row
@@ -1424,6 +1468,10 @@ def list_commitments(user_id: UUID = Depends(current_user_id)) -> list[dict]:
             continue
         projected = dict(row)
         projected["next_due_on"] = projected_date
+        if projected["commitment_type"] == "installment":
+            projected["current_installment"] = projected_installment_number(
+                row, projected_date.year, projected_date.month
+            ) or row["current_installment"]
         commitments.append(projected)
     commitments.sort(key=lambda row: (row["next_due_on"], row["name"].lower()))
     return commitments
@@ -1618,6 +1666,9 @@ def record_commitment(
                 ).fetchone()
                 category_name = category["name"] if category else None
 
+            # The daily processor already advances the commitment when it
+            # creates this planned transaction. Confirming it must not advance
+            # the schedule a second time.
             updated_commitment = dict(commitment)
             updated_commitment["category_name"] = category_name
             confirmed_transaction["category_name"] = category_name
@@ -1733,11 +1784,22 @@ def delete_commitment(commitment_id: UUID, user_id: UUID = Depends(current_user_
 def list_transactions(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    year: Annotated[int, Query(ge=2000, le=2100)] | None = None,
+    month: Annotated[int, Query(ge=1, le=12)] | None = None,
     user_id: UUID = Depends(current_user_id),
 ) -> list[dict]:
+    if (year is None) != (month is None):
+        raise HTTPException(status_code=400, detail="Informe ano e mês juntos para filtrar o histórico")
+    filters = ["t.user_id = %s"]
+    parameters: list[object] = [user_id]
+    if year is not None and month is not None:
+        period_start, period_end = month_bounds(year, month)
+        filters.extend(["t.occurred_on >= %s", "t.occurred_on < %s"])
+        parameters.extend([period_start, period_end])
+    parameters.extend([limit, offset])
     with get_connection() as connection:
         rows = connection.execute(
-            """
+            f"""
             select
               t.id, t.description, t.amount, t.direction, t.occurred_on,
               t.category_id, t.commitment_id, t.status, t.notes,
@@ -1745,11 +1807,11 @@ def list_transactions(
             from public.transactions t
             left join public.categories c
               on c.id = t.category_id and c.user_id = t.user_id
-            where t.user_id = %s
+            where {' and '.join(filters)}
             order by t.occurred_on desc, t.created_at desc
             limit %s offset %s
             """,
-            (user_id, limit, offset),
+            parameters,
         ).fetchall()
     return list(rows)
 
@@ -2675,6 +2737,12 @@ def dashboard(
     next_year, next_month_number = next_month(selected_year, selected_month)
     next_start, next_end = month_bounds(next_year, next_month_number)
     with get_connection() as connection:
+        current_opening, anchor_period = balance_opening_for_period(
+            connection, user_id, selected_year, selected_month
+        )
+        next_opening, _ = balance_opening_for_period(
+            connection, user_id, next_year, next_month_number
+        )
         current_totals = connection.execute(
             """
             select direction, coalesce(sum(amount), 0) as total
@@ -2710,6 +2778,7 @@ def dashboard(
               c.id, c.name, c.amount, c.direction, c.commitment_type,
               c.frequency, c.due_rule, c.due_day, c.due_month, c.business_day_number,
               c.starts_on, c.next_due_on, c.ends_on,
+              c.total_installments, c.current_installment,
               cat.name as category_name
             from public.commitments c
             left join public.categories cat
@@ -2730,10 +2799,11 @@ def dashboard(
             left join public.categories c
               on c.id = t.category_id and c.user_id = t.user_id
             where t.user_id = %s
+              and t.occurred_on >= %s and t.occurred_on < %s
             order by t.occurred_on desc, t.created_at desc
             limit 6
             """,
-            (user_id,),
+            (user_id, current_start, current_end),
         ).fetchall()
 
     commitments = []
@@ -2743,6 +2813,9 @@ def dashboard(
             continue
         projected = dict(row)
         projected["next_due_on"] = projected_date
+        projected["installment_number"] = projected_installment_number(
+            row, projected_date.year, projected_date.month
+        )
         commitments.append(projected)
     commitments.sort(key=lambda row: (row["next_due_on"], row["name"].lower()))
 
@@ -2758,6 +2831,10 @@ def dashboard(
     )
     next_income = planned.get(Direction.INCOME, Decimal("0.00")) + commitment_income
     next_expenses = planned.get(Direction.EXPENSE, Decimal("0.00")) + commitment_expenses
+    current_net = current.get(Direction.INCOME, Decimal("0.00")) - current.get(Direction.EXPENSE, Decimal("0.00"))
+    next_net = next_income - next_expenses
+    current_ending = current_opening + current_net
+    next_ending = next_opening + next_net
     budget_overview = BudgetDashboardRead(
         base_amount=budget_summary["base_amount"],
         allocated_amount=budget_summary["allocated_amount"],
@@ -2771,19 +2848,25 @@ def dashboard(
         "month": f"{selected_year:04d}-{selected_month:02d}",
         "next_month": f"{next_year:04d}-{next_month_number:02d}",
         "current": DashboardPeriod(
+            opening_balance=current_opening,
             income=current.get(Direction.INCOME, Decimal("0.00")),
             expenses=current.get(Direction.EXPENSE, Decimal("0.00")),
-            available=current.get(Direction.INCOME, Decimal("0.00"))
-            - current.get(Direction.EXPENSE, Decimal("0.00")),
+            net_result=current_net,
+            ending_balance=current_ending,
+            available=current_ending,
         ),
         "next_month_summary": DashboardPeriod(
+            opening_balance=next_opening,
             income=next_income,
             expenses=next_expenses,
-            available=next_income - next_expenses,
+            net_result=next_net,
+            ending_balance=next_ending,
+            available=next_ending,
         ),
         "next_month_commitments": [CommitmentPreview(**row) for row in commitments],
         "recent_transactions": [TransactionRead(**row) for row in recent],
         "budget": budget_overview,
+        "balance_anchor": anchor_period,
     }
 
 

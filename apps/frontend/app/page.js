@@ -754,6 +754,7 @@ export function SimulatorView({ session, sessionGeneration, accountName, onLogou
 export function RegisterView({ session, sessionGeneration, accountName, onLogout }) {
   const [text, setText] = useState("");
   const [movements, setMovements] = useState([]);
+  const [historyPeriod, setHistoryPeriod] = useState(currentPeriod);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
@@ -782,7 +783,7 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
     const requestId = ++movementsRequestRef.current;
     setLoading(true);
     try {
-      const data = await apiRequest("/api/v1/transactions?limit=12", session);
+      const data = await apiRequest(`/api/v1/transactions?limit=100&year=${historyPeriod.year}&month=${historyPeriod.month}`, session);
       if (requestId !== movementsRequestRef.current) return false;
       setMovements(data);
       return true;
@@ -806,7 +807,7 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
   useEffect(() => {
     loadMovements();
     loadCategories();
-  }, [sessionGeneration]);
+  }, [sessionGeneration, historyPeriod.year, historyPeriod.month]);
 
   function registerMovement(event) {
     event.preventDefault();
@@ -1205,8 +1206,14 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
 
         <section className="registerHistory" aria-labelledby="history-title">
           <div className="sectionHeader">
-            <h2 id="history-title">Últimos registros</h2>
+            <div><p className="eyebrow">HISTÓRICO</p><h2 id="history-title">Registros de {formatMonthYear(historyPeriod.year, historyPeriod.month)}</h2></div>
             <span className="seeAll">{loading ? "Atualizando" : `${movements.length} registros`}</span>
+          </div>
+          <div className="historyPeriodControls" aria-label="Selecionar mês do histórico">
+            <button type="button" onClick={() => setHistoryPeriod((period) => shiftPeriod(period, -1))} aria-label="Mês anterior">←</button>
+            <input type="month" value={periodInputValue(historyPeriod.year, historyPeriod.month)} onChange={(event) => setHistoryPeriod(periodFromInput(event.target.value))} />
+            <button type="button" onClick={() => setHistoryPeriod((period) => shiftPeriod(period, 1))} aria-label="Próximo mês">→</button>
+            <button type="button" onClick={() => setHistoryPeriod(currentPeriod())}>Mês atual</button>
           </div>
           <div className="movementList">
             {!loading && movements.length === 0 ? (
@@ -1287,7 +1294,7 @@ const emptyCommitment = {
 
 export function SettingsView({ session, sessionGeneration, accountName, onLogout }) {
   const [settings, setSettings] = useState(null);
-  const [draft, setDraft] = useState({ auto_confirm_income: false, default_due_rule: "fixed_day", default_business_day_number: 5 });
+  const [draft, setDraft] = useState({ auto_confirm_income: false, default_due_rule: "fixed_day", default_business_day_number: 5, opening_period: "", opening_balance: "" });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -1300,6 +1307,8 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
           auto_confirm_income: data.auto_confirm_income,
           default_due_rule: data.default_due_rule,
           default_business_day_number: data.default_business_day_number,
+          opening_period: periodInputValue(data.opening_year, data.opening_month),
+          opening_balance: data.opening_balance ?? "",
         });
       })
       .catch((error) => setNotice(error.message))
@@ -1310,12 +1319,16 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
     event.preventDefault();
     setBusy(true);
     try {
+      const opening = periodFromInput(draft.opening_period);
       const data = await apiRequest("/api/v1/settings", session, {
         method: "PATCH",
         body: JSON.stringify({
           auto_confirm_income: draft.auto_confirm_income,
           default_due_rule: draft.default_due_rule,
           default_business_day_number: Number(draft.default_business_day_number),
+          opening_year: opening.year,
+          opening_month: opening.month,
+          opening_balance: draft.opening_period ? Number(String(draft.opening_balance).replace(",", ".")) : null,
         }),
       });
       setSettings(data);
@@ -1323,6 +1336,8 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
         auto_confirm_income: data.auto_confirm_income,
         default_due_rule: data.default_due_rule,
         default_business_day_number: data.default_business_day_number,
+        opening_period: periodInputValue(data.opening_year, data.opening_month),
+        opening_balance: data.opening_balance ?? "",
       });
       setNotice("Configurações salvas");
     } catch (error) {
@@ -1331,6 +1346,8 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
       setBusy(false);
     }
   }
+
+  const openingPeriod = periodFromInput(draft.opening_period);
 
   return (
     <main className="shell">
@@ -1387,6 +1404,24 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
               <div className="businessDayNote"><strong>Regra atual</strong><span>Segunda a sábado contam como dias úteis. Domingo não conta. Feriados ainda não são considerados.</span></div>
             </section>
 
+            <section className="settingsSection" aria-labelledby="opening-balance-title">
+              <div className="settingsSectionHeading">
+                <div><p className="eyebrow">SALDO DE REFERÊNCIA</p><h2 id="opening-balance-title">Comece pelo saldo que você conhece.</h2></div>
+              </div>
+              <p className="settingsDescription">Informe uma vez quanto havia disponível no início de um mês. O saldo dos meses seguintes será calculado pelas movimentações concluídas.</p>
+              <div className="settingsFields">
+                <label className="settingsField">
+                  <span>Mês de referência</span>
+                  <input type="month" value={draft.opening_period} onChange={(event) => setDraft((current) => ({ ...current, opening_period: event.target.value }))} min="2000-01" max="2100-12" />
+                </label>
+                <label className="settingsField">
+                  <span>Saldo inicial informado</span>
+                  <input type="number" step="0.01" value={draft.opening_balance} onChange={(event) => setDraft((current) => ({ ...current, opening_balance: event.target.value }))} placeholder="0,00" required={Boolean(draft.opening_period)} />
+                </label>
+              </div>
+              <div className="businessDayNote"><strong>Importante</strong><span>Isso é um saldo calculado a partir da sua referência, não uma leitura automática do banco. Saldo anterior não vira receita.</span></div>
+            </section>
+
             {notice && <p className="notice" role="status">{notice}</p>}
             <div className="settingsActions"><span>{loading ? "Carregando preferências..." : settings ? "Preferências salvas por usuário." : ""}</span><button className="confirmButton" type="submit" disabled={busy || loading}>{busy ? "Salvando..." : "Salvar configurações"}</button></div>
           </form>
@@ -1401,6 +1436,7 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
                 <div><span>Datas padrão</span><b>{draft.default_due_rule === "business_day" ? `${draft.default_business_day_number}º útil` : "Dia fixo"}</b></div>
                 <div><span>Sábado</span><b>Conta</b></div>
                 <div><span>Domingo</span><b>Não conta</b></div>
+                <div><span>Saldo de referência</span><b>{draft.opening_period ? formatMonthYear(openingPeriod.year, openingPeriod.month) : "Não informado"}</b></div>
               </div>
               <Link className="asideLink" href="/planejamento">Abrir planejamento <span>→</span></Link>
             </ResponsiveDetails>
@@ -2104,7 +2140,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
       name: commitment.name,
       amount: String(commitment.amount),
       direction: commitment.direction,
-      commitment_type: commitment.commitment_type,
+      commitment_type: commitment.commitment_type === "subscription" ? "recurring" : commitment.commitment_type,
       frequency: commitment.frequency,
       due_rule: commitment.due_rule,
       due_day: commitment.due_day ? String(commitment.due_day) : commitment.next_due_on.slice(8, 10),
@@ -2302,17 +2338,16 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
                   <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updateForm("amount", event.target.value)} placeholder="0,00" required />
                 </label>
                 <label className="planningField">
-                  <span>Tipo</span>
+                  <span>Tipo da movimentação</span>
                   <select value={form.direction} onChange={(event) => changeDirection(event.target.value)}>
                     <option value="expense">Gasto</option>
                     <option value="income">Recebimento</option>
                   </select>
                 </label>
                 <label className="planningField">
-                  <span>Natureza</span>
+                  <span>Tipo de compromisso</span>
                   <select value={form.commitment_type} onChange={(event) => changeCommitmentType(event.target.value)}>
                     <option value="recurring">Recorrente</option>
-                    <option value="subscription">Assinatura</option>
                     <option value="installment">Parcela</option>
                   </select>
                 </label>
@@ -2373,6 +2408,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
               {form.commitment_type !== "installment" && form.due_rule === "business_day" && (
                 <p className="planningHint"><strong>Como contamos:</strong> segunda a sábado são dias úteis; domingos não contam. Feriados ainda não são considerados.</p>
               )}
+              <p className="planningHint"><strong>Como acontece:</strong> recorrente repete-se até ser encerrado; parcela tem início, progresso e total definidos.</p>
               {notice && <p className="notice" role="status">{notice}</p>}
               <div className="planningActions">
                 {editingId && <span>As alterações valem para as próximas projeções.</span>}
@@ -2393,7 +2429,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
                     <div className="commitmentDate"><strong>{commitment.next_due_on.slice(8, 10)}</strong><span>{formatMonth(commitment.next_due_on.slice(0, 7)).slice(0, 3)}</span></div>
                     <div className="commitmentInfo">
                       <strong>{commitment.name}</strong>
-                      <span>{commitment.commitment_type === "subscription" ? "Assinatura" : commitment.commitment_type === "installment" ? `Parcela ${commitment.current_installment}/${commitment.total_installments}` : "Recorrente"} · {commitment.category_name || "Sem categoria"} · {commitment.due_rule === "business_day" ? `${commitment.business_day_number}º dia útil` : `dia ${commitment.next_due_on.slice(8, 10)}`} · {formatScheduleDate(commitment.next_due_on)}</span>
+                      <span>{commitment.commitment_type === "installment" ? `Parcela ${commitment.current_installment}/${commitment.total_installments}` : "Recorrente"} · {commitment.category_name || "Sem categoria"} · {commitment.due_rule === "business_day" ? `${commitment.business_day_number}º dia útil` : `dia ${commitment.next_due_on.slice(8, 10)}`} · {formatScheduleDate(commitment.next_due_on)}</span>
                     </div>
                     <b className={commitment.direction === "income" ? "income" : "expense"}>{commitment.direction === "income" ? "+" : "−"} {formatCurrency(commitment.amount)}</b>
                     <div className="rowActions"><button type="button" onClick={() => recordCommitment(commitment)} disabled={recordingId === commitment.id}>{recordingId === commitment.id ? "Registrando..." : "Registrar"}</button><button type="button" onClick={() => startEditing(commitment)}>Editar</button><button type="button" onClick={() => removeCommitment(commitment)}>Excluir</button></div>
@@ -2408,8 +2444,8 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
               <p className="eyebrow">COMO FUNCIONA</p>
               <h2 id="planning-summary-title">O Cifro olha para frente.</h2>
               <div className="planningRules">
-                <div><strong>Recorrentes</strong><span>Salário e contas mensais aparecem no próximo mês pelo dia cadastrado.</span></div>
-                <div><strong>Parcelas</strong><span>Entram somente na data da próxima parcela, com o progresso visível.</span></div>
+                <div><strong>Recorrentes</strong><span>Salário e contas periódicas aparecem pelo dia cadastrado.</span></div>
+                <div><strong>Parcelas</strong><span>Possuem início, quantidade limitada e progresso visível.</span></div>
                 <div><strong>Registros reais</strong><span>O planejamento não altera o saldo de hoje nem duplica uma movimentação.</span></div>
               </div>
               <Link className="asideLink" href="/">Voltar para a visão geral <span>→</span></Link>
@@ -2548,6 +2584,7 @@ export function CategoriesView({ session, sessionGeneration, accountName, onLogo
           </div>
           <div>
             <label htmlFor="new-category-kind">Usar para</label>
+            <small className="fieldHint">Gastos: dinheiro saindo. Recebimentos: dinheiro entrando. Os dois: aceita os dois sentidos.</small>
             <select id="new-category-kind" value={kind} onChange={(event) => setKind(event.target.value)}>
               <option value="expense">Gastos</option>
               <option value="income">Recebimentos</option>
@@ -2662,25 +2699,29 @@ export default function Home({ view = "dashboard" }) {
   const [dashboard, setDashboard] = useState(null);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [notice, setNotice] = useState("");
+  const [selectedPeriod, setSelectedPeriod] = useState(currentPeriod);
+  const dashboardRequestRef = useRef(0);
 
-  async function loadDashboard(activeSession = session) {
+  async function loadDashboard(activeSession = session, period = selectedPeriod) {
     if (!activeSession) return;
+    const requestId = ++dashboardRequestRef.current;
     setLoadingDashboard(true);
     try {
-      const data = await apiRequest("/api/v1/dashboard", activeSession);
+      const data = await apiRequest(`/api/v1/dashboard?year=${period.year}&month=${period.month}`, activeSession);
+      if (requestId !== dashboardRequestRef.current) return;
       setDashboard(data);
     } catch (error) {
-      setNotice(error.message);
+      if (requestId === dashboardRequestRef.current) setNotice(error.message);
     } finally {
-      setLoadingDashboard(false);
+      if (requestId === dashboardRequestRef.current) setLoadingDashboard(false);
     }
   }
 
   useEffect(() => {
     if (view !== "dashboard") return;
-    if (session) loadDashboard(session);
+    if (session) loadDashboard(session, selectedPeriod);
     else setDashboard(null);
-  }, [sessionGeneration, view]);
+  }, [sessionGeneration, view, selectedPeriod.year, selectedPeriod.month]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -2750,8 +2791,8 @@ export default function Home({ view = "dashboard" }) {
     return <DataView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
-  const current = dashboard?.current || { income: 0, expenses: 0, available: 0 };
-  const next = dashboard?.next_month_summary || { income: 0, expenses: 0, available: 0 };
+  const current = dashboard?.current || { opening_balance: 0, income: 0, expenses: 0, ending_balance: 0, available: 0 };
+  const next = dashboard?.next_month_summary || { opening_balance: 0, income: 0, expenses: 0, ending_balance: 0, available: 0 };
   const currentUsed = current.income ? Math.min(100, Math.round((current.expenses / current.income) * 100)) : 0;
   const nextUsed = next.income ? Math.min(100, Math.round((next.expenses / next.income) * 100)) : 0;
   const movements = dashboard?.recent_transactions || [];
@@ -2764,8 +2805,11 @@ export default function Home({ view = "dashboard" }) {
           <div>
             <h1>Seu dinheiro, à frente.</h1>
           </div>
-          <div className="periodButton" aria-label="Período atual">
-            {formatMonth(dashboard?.month)} <b>—</b> {formatMonth(dashboard?.next_month)}
+          <div className="periodControls" aria-label="Selecionar mês da visão geral">
+            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, -1))} aria-label="Mês anterior">←</button>
+            <input type="month" value={periodInputValue(selectedPeriod.year, selectedPeriod.month)} onChange={(event) => setSelectedPeriod(periodFromInput(event.target.value))} />
+            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, 1))} aria-label="Próximo mês">→</button>
+            <button className="periodToday" type="button" onClick={() => setSelectedPeriod(currentPeriod())}>Hoje</button>
           </div>
         </header>
 
@@ -2777,14 +2821,20 @@ export default function Home({ view = "dashboard" }) {
 
           <div className="comparisonGrid">
             <article className="monthPanel currentPanel">
-              <div className="monthHeading"><span>{formatMonth(dashboard?.month)}</span><small>mês atual</small></div>
-              <p className="metricLabel">Disponível agora</p>
-              <Money>{formatCurrency(current.available)}</Money>
+              <div className="monthHeading"><span>{formatMonth(dashboard?.month)}</span><small>mês consultado</small></div>
+              <p className="metricLabel">Saldo calculado</p>
+              <Money>{formatCurrency(current.ending_balance)}</Money>
               <div className="miniStats">
+                <div><span>Saldo anterior</span><b>{formatCurrency(current.opening_balance)}</b></div>
                 <div><span>Entrou</span><b>{formatCurrency(current.income)}</b></div>
                 <div><span>Saiu</span><b>{formatCurrency(current.expenses)}</b></div>
               </div>
               <Progress value={currentUsed} label={`${currentUsed}% utilizado`} detail="movimentações concluídas" />
+              {dashboard?.balance_anchor ? (
+                <p className="commitmentEmpty">Saldo calculado a partir do saldo de referência de {formatMonthYear(...dashboard.balance_anchor.split("-").map(Number))}.</p>
+              ) : (
+                <p className="commitmentEmpty">Defina um saldo inicial para tornar este cálculo mais fiel. <Link href="/configuracoes">Configurar</Link></p>
+              )}
               {dashboard?.budget ? (
                 <div className={Number(dashboard.budget.unallocated_amount) < 0 ? "budgetDashboardPreview overBudget" : "budgetDashboardPreview"}>
                   <div>
@@ -2804,12 +2854,13 @@ export default function Home({ view = "dashboard" }) {
             <div className="comparisonRail" aria-hidden="true"><span>→</span></div>
 
             <article className="monthPanel nextPanel" id="planning">
-              <div className="monthHeading"><span>{formatMonth(dashboard?.next_month)}</span><small>próximo mês</small></div>
-              <p className="metricLabel">Livre após compromissos</p>
-              <Money accent>{formatCurrency(next.available)}</Money>
+              <div className="monthHeading"><span>{formatMonth(dashboard?.next_month)}</span><small>próxima projeção</small></div>
+              <p className="metricLabel">Saldo projetado</p>
+              <Money accent>{formatCurrency(next.ending_balance)}</Money>
               <div className="miniStats">
-                <div><span>Previsto</span><b>{formatCurrency(next.income)}</b></div>
-                <div><span>Comprometido</span><b>{formatCurrency(next.expenses)}</b></div>
+                <div><span>Saldo anterior</span><b>{formatCurrency(next.opening_balance)}</b></div>
+                <div><span>Entradas previstas</span><b>{formatCurrency(next.income)}</b></div>
+                <div><span>Saídas previstas</span><b>{formatCurrency(next.expenses)}</b></div>
               </div>
               <Progress value={nextUsed} label={`${nextUsed}% comprometido`} detail={`${dashboard?.next_month_commitments?.length || 0} itens previstos`} accent />
               {dashboard?.next_month_commitments?.length ? (
@@ -2818,7 +2869,7 @@ export default function Home({ view = "dashboard" }) {
                   {dashboard.next_month_commitments.slice(0, 3).map((commitment) => (
                     <div className="commitmentPreviewRow" key={commitment.id}>
                       <span>{formatDate(commitment.next_due_on)}</span>
-                      <strong>{commitment.name}</strong>
+                      <strong>{commitment.name}{commitment.installment_number ? ` · ${commitment.installment_number}/${commitment.total_installments}` : ""}</strong>
                       <b className={commitment.direction === "income" ? "income" : "expense"}>{commitment.direction === "income" ? "+" : "−"} {formatCurrency(commitment.amount)}</b>
                     </div>
                   ))}
