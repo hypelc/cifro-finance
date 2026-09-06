@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase";
+import { apiRequest } from "../lib/api";
 import { useSession } from "./providers";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAX_DESCRIPTION_LENGTH = 160;
 
 function formatCurrency(value) {
@@ -26,6 +26,16 @@ function formatMonth(value) {
 function formatMonthYear(year, month) {
   return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" })
     .format(new Date(year, month - 1, 1));
+}
+
+function periodInputValue(year, month) {
+  return year && month ? `${year}-${String(month).padStart(2, "0")}` : "";
+}
+
+function periodFromInput(value) {
+  if (!/^\d{4}-\d{2}$/.test(value)) return { year: null, month: null };
+  const [year, month] = value.split("-").map(Number);
+  return { year, month };
 }
 
 function currentPeriod() {
@@ -130,60 +140,6 @@ function parseQuickEntry(text) {
   };
 }
 
-function formatApiError(body, fallback) {
-  const detail = body?.detail ?? body?.message;
-  if (typeof detail === "string" && detail.trim()) return detail;
-
-  if (Array.isArray(detail)) {
-    const messages = detail.map((item) => {
-      if (typeof item === "string") return item;
-      if (!item || typeof item !== "object") return "";
-
-      const field = Array.isArray(item.loc) ? item.loc[item.loc.length - 1] : null;
-      const label = field === "description" ? "A descrição" : field === "notes" ? "As observações" : "Este campo";
-      if (item.type === "string_too_long") {
-        return `${label} pode ter no máximo ${item.ctx?.max_length || 160} caracteres.`;
-      }
-      if (item.type === "string_too_short") {
-        return `${label} precisa ser preenchido.`;
-      }
-      if (item.type === "value_error" && field === "description") {
-        return "Informe uma descrição com pelo menos um caractere válido.";
-      }
-      return typeof item.message === "string" ? item.message : "Revise os dados informados.";
-    }).filter(Boolean);
-    if (messages.length > 0) return messages.join(" · ");
-  }
-
-  if (detail && typeof detail === "object" && typeof detail.message === "string") {
-    return detail.message;
-  }
-  return fallback;
-}
-
-async function apiRequest(path, session, options = {}) {
-  let response;
-  try {
-    response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-        ...(options.headers || {}),
-      },
-    });
-  } catch {
-    throw new Error("Não foi possível conectar à API. Tente novamente.");
-  }
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(formatApiError(body, "Não foi possível falar com a API."));
-  }
-
-  if (response.status === 204) return null;
-  return response.json();
-}
 
 function Money({ children, accent = false }) {
   return <strong className={accent ? "money moneyAccent" : "money"}>{children}</strong>;
@@ -289,7 +245,7 @@ function BrandIdentity() {
   );
 }
 
-function Login({ email, password, setEmail, setPassword, onSubmit, error, busy }) {
+export function Login({ email, password, setEmail, setPassword, onSubmit, error, busy }) {
   return (
     <main className="authShell">
       <section className="authIntro">
@@ -397,7 +353,7 @@ function Sidebar({ active, accountName, onLogout }) {
   );
 }
 
-function SimulatorView({ session, accountName, onLogout }) {
+export function SimulatorView({ session, sessionGeneration, accountName, onLogout }) {
   const [simulations, setSimulations] = useState([]);
   const [simulation, setSimulation] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -406,11 +362,13 @@ function SimulatorView({ session, accountName, onLogout }) {
   const [selectedId, setSelectedId] = useState("");
   const [newName, setNewName] = useState("");
   const [newReference, setNewReference] = useState("");
+  const [newPeriod, setNewPeriod] = useState(currentPeriod);
   const [itemForm, setItemForm] = useState({ description: "", direction: "expense", amount: "", category_id: "" });
   const [editingItemId, setEditingItemId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const loadRequestRef = useRef(0);
   const { askConfirmation, confirmationDialog } = useConfirmationDialog();
 
   async function loadSimulations(preferredId = selectedId) {
@@ -423,10 +381,12 @@ function SimulatorView({ session, accountName, onLogout }) {
 
   async function loadSimulation(id = selectedId) {
     if (!id) return;
+    const requestId = ++loadRequestRef.current;
     const [data, options] = await Promise.all([
       apiRequest(`/api/v1/simulations/${id}`, session),
       apiRequest(`/api/v1/simulations/${id}/planning-options`, session),
     ]);
+    if (requestId !== loadRequestRef.current) return;
     setSimulation(data);
     setPlanningOptions(options);
     setSelectedPlanningIds([]);
@@ -463,9 +423,10 @@ function SimulatorView({ session, accountName, onLogout }) {
     }
     load();
     return () => { active = false; };
-  }, [session]);
+  }, [sessionGeneration]);
 
   async function selectSimulation(id) {
+    loadRequestRef.current += 1;
     setSelectedId(id);
     setNotice("");
     try {
@@ -481,16 +442,26 @@ function SimulatorView({ session, accountName, onLogout }) {
     try {
       const created = await apiRequest("/api/v1/simulations", session, {
         method: "POST",
-        body: JSON.stringify({ name: newName.trim() || "Nova simulação", reference: newReference.trim() || null }),
+        body: JSON.stringify({
+          name: newName.trim() || "Nova simulação",
+          reference: newReference.trim() || null,
+          period_year: newPeriod.year,
+          period_month: newPeriod.month,
+        }),
       });
       setNewName("");
       setNewReference("");
+      setNewPeriod(currentPeriod());
       setSimulation(created);
       setSelectedId(created.id);
       setSimulations((current) => [created, ...current]);
-      const options = await apiRequest(`/api/v1/simulations/${created.id}/planning-options`, session);
-      setPlanningOptions(options);
       setNotice("Simulação criada e salva");
+      try {
+        const options = await apiRequest(`/api/v1/simulations/${created.id}/planning-options`, session);
+        setPlanningOptions(options);
+      } catch {
+        setNotice("Simulação criada e salva. Não foi possível carregar as opções do planejamento.");
+      }
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -505,11 +476,22 @@ function SimulatorView({ session, accountName, onLogout }) {
     try {
       const updated = await apiRequest(`/api/v1/simulations/${simulation.id}`, session, {
         method: "PATCH",
-        body: JSON.stringify({ name: simulation.name.trim(), reference: simulation.reference?.trim() || null }),
+        body: JSON.stringify({
+          name: simulation.name.trim(),
+          reference: simulation.reference?.trim() || null,
+          period_year: simulation.period_year || null,
+          period_month: simulation.period_month || null,
+        }),
       });
       setSimulation(updated);
       setSimulations((current) => current.map((item) => item.id === updated.id ? updated : item));
       setNotice("Simulação salva");
+      try {
+        const options = await apiRequest(`/api/v1/simulations/${updated.id}/planning-options`, session);
+        setPlanningOptions(options);
+      } catch {
+        setNotice("Simulação salva. Não foi possível atualizar as opções do planejamento.");
+      }
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -525,9 +507,13 @@ function SimulatorView({ session, accountName, onLogout }) {
       setSimulations((current) => [copy, ...current]);
       setSimulation(copy);
       setSelectedId(copy.id);
-      const options = await apiRequest(`/api/v1/simulations/${copy.id}/planning-options`, session);
-      setPlanningOptions(options);
       setNotice("Simulação duplicada");
+      try {
+        const options = await apiRequest(`/api/v1/simulations/${copy.id}/planning-options`, session);
+        setPlanningOptions(options);
+      } catch {
+        setNotice("Simulação duplicada. Não foi possível carregar as opções do planejamento.");
+      }
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -550,9 +536,16 @@ function SimulatorView({ session, accountName, onLogout }) {
       const remaining = simulations.filter((item) => item.id !== simulation.id);
       setSimulations(remaining);
       setSelectedId(remaining[0]?.id || "");
-      if (remaining[0]) await loadSimulation(remaining[0].id);
-      else setSimulation(null);
-      setNotice("Simulação excluída");
+      setSimulation(null);
+      let nextLoadFailed = false;
+      if (remaining[0]) {
+        try {
+          await loadSimulation(remaining[0].id);
+        } catch {
+          nextLoadFailed = true;
+        }
+      }
+      setNotice(nextLoadFailed ? "Simulação excluída. Não foi possível carregar o próximo cenário." : "Simulação excluída");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -693,14 +686,16 @@ function SimulatorView({ session, accountName, onLogout }) {
             {!simulation ? (
               <form className="simulatorCreate" onSubmit={createSimulation}>
                 <div><label htmlFor="new-simulation-name">Nome do cenário</label><input id="new-simulation-name" value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Ex.: Comprar notebook" maxLength={120} /></div>
-                <div><label htmlFor="new-simulation-reference">Referência opcional</label><input id="new-simulation-reference" value={newReference} onChange={(event) => setNewReference(event.target.value)} placeholder="Ex.: Setembro ou objetivo" maxLength={120} /></div>
+                <div><label htmlFor="new-simulation-reference">Referência opcional</label><input id="new-simulation-reference" value={newReference} onChange={(event) => setNewReference(event.target.value)} placeholder="Ex.: salário + aluguel" maxLength={120} /></div>
+                <div><label htmlFor="new-simulation-period">Mês do cenário</label><input id="new-simulation-period" type="month" value={periodInputValue(newPeriod.year, newPeriod.month)} onChange={(event) => setNewPeriod(periodFromInput(event.target.value))} required /></div>
                 <button className="confirmButton" type="submit" disabled={saving}>{saving ? "Criando..." : "Nova simulação"}</button>
               </form>
             ) : (
               <>
                 <form className="simulatorMeta" onSubmit={saveSimulationDetails}>
                   <div><label htmlFor="simulation-name">Cenário</label><input id="simulation-name" value={simulation.name} onChange={(event) => setSimulation((current) => ({ ...current, name: event.target.value }))} maxLength={120} /></div>
-                  <div><label htmlFor="simulation-reference">Referência</label><input id="simulation-reference" value={simulation.reference || ""} onChange={(event) => setSimulation((current) => ({ ...current, reference: event.target.value }))} placeholder="Ex.: próximo mês" maxLength={120} /></div>
+                  <div><label htmlFor="simulation-reference">Referência</label><input id="simulation-reference" value={simulation.reference || ""} onChange={(event) => setSimulation((current) => ({ ...current, reference: event.target.value }))} placeholder="Ex.: salário + aluguel" maxLength={120} /></div>
+                  <div><label htmlFor="simulation-period">Mês do cenário</label><input id="simulation-period" type="month" value={periodInputValue(simulation.period_year, simulation.period_month)} onChange={(event) => setSimulation((current) => ({ ...current, ...periodFromInput(event.target.value) }))} required /></div>
                   <div className="simulatorMetaActions"><button className="secondaryButton" type="submit" disabled={saving}>Salvar</button><button className="secondaryButton" type="button" onClick={duplicateSimulation} disabled={saving}>Duplicar</button><button className="dangerButton" type="button" onClick={deleteSimulation} disabled={saving}>Excluir</button></div>
                 </form>
 
@@ -733,7 +728,7 @@ function SimulatorView({ session, accountName, onLogout }) {
 
                 <section className="simulatorSection" aria-labelledby="planning-copy-title">
                   <div className="sectionHeader"><div><p className="eyebrow">ORIGEM OPCIONAL</p><h2 id="planning-copy-title">Adicionar do planejamento</h2></div><span className="seeAll">Cópia independente</span></div>
-                  {planningOptions.length === 0 ? <p className="emptyState">Nenhum compromisso ativo disponível para copiar.</p> : <>
+                  {planningOptions.length === 0 ? <p className="emptyState">{simulation.period_year ? "Nenhum compromisso ativo ocorre neste mês." : "Defina o mês do cenário acima para copiar compromissos do planejamento."}</p> : <>
                     <div className="planningOptionList">{planningOptions.map((option) => <label className="planningOption" key={option.id}><input type="checkbox" checked={selectedPlanningIds.includes(option.id)} onChange={(event) => setSelectedPlanningIds((current) => event.target.checked ? [...current, option.id] : current.filter((id) => id !== option.id))} /><span><strong>{option.name}</strong><small>{formatDate(option.next_due_on)} · {option.category_name || "Sem categoria"}</small></span><b className={option.direction}>{option.direction === "income" ? "+" : "−"} {formatCurrency(option.amount)}</b></label>)}</div>
                     <button className="secondaryButton" type="button" onClick={addPlanningItems} disabled={saving || selectedPlanningIds.length === 0}>Copiar selecionados</button>
                   </>}
@@ -746,7 +741,7 @@ function SimulatorView({ session, accountName, onLogout }) {
           <aside className="simulatorAside" aria-labelledby="simulator-summary-title">
             <p className="eyebrow">CENÁRIOS SALVOS</p><h2 id="simulator-summary-title">Suas possibilidades.</h2>
             <form className="asideNewSimulation" onSubmit={createSimulation}><input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Nome da nova simulação" maxLength={120} /><button className="secondaryButton" type="submit" disabled={saving}>+ Nova</button></form>
-            <div className="simulationList">{loading ? <p className="emptyState">Carregando...</p> : simulations.length === 0 ? <p className="emptyState">Nenhuma simulação salva.</p> : simulations.map((item) => <button className={item.id === selectedId ? "simulationCard selected" : "simulationCard"} type="button" key={item.id} onClick={() => selectSimulation(item.id)}><span><strong>{item.name}</strong><small>{item.reference || "Sem referência"} · {item.item_count} itens</small></span><b className={Number(item.final_balance) < 0 ? "negative" : ""}>{formatCurrency(item.final_balance)}</b></button>)}</div>
+            <div className="simulationList">{loading ? <p className="emptyState">Carregando...</p> : simulations.length === 0 ? <p className="emptyState">Nenhuma simulação salva.</p> : simulations.map((item) => <button className={item.id === selectedId ? "simulationCard selected" : "simulationCard"} type="button" key={item.id} onClick={() => selectSimulation(item.id)}><span><strong>{item.name}</strong><small>{item.period_year ? formatMonthYear(item.period_year, item.period_month) : "Sem período"} · {item.item_count} itens</small></span><b className={Number(item.final_balance) < 0 ? "negative" : ""}>{formatCurrency(item.final_balance)}</b></button>)}</div>
             {simulation && <ResponsiveDetails className="simulatorSummaryDetails" label={`Resumo · ${formatCurrency(finalBalance)}`}><div className="simulationSummary"><p className="eyebrow">RESUMO FINAL</p><strong className={finalBalance < 0 ? "simulationFinal negative" : "simulationFinal"}>{formatCurrency(finalBalance)}</strong><div className="summaryRows"><div><span>Entradas</span><b className="income">{formatCurrency(totalIncome)}</b></div><div><span>Saídas</span><b>{formatCurrency(totalExpenses)}</b></div><div><span>Itens</span><b>{simulation.items.length}</b></div></div><h3>Gastos por categoria</h3>{simulation.totals.expenses_by_category.length === 0 ? <p className="emptyState">As saídas aparecerão aqui.</p> : <div className="simulationCategoryList">{simulation.totals.expenses_by_category.map((category) => <div key={category.category_id || "none"}><span>{category.category_name}</span><b>{formatCurrency(category.amount)}</b></div>)}</div>}</div></ResponsiveDetails>}
           </aside>
         </div>
@@ -756,7 +751,7 @@ function SimulatorView({ session, accountName, onLogout }) {
   );
 }
 
-function RegisterView({ session, accountName, onLogout }) {
+export function RegisterView({ session, sessionGeneration, accountName, onLogout }) {
   const [text, setText] = useState("");
   const [movements, setMovements] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -780,17 +775,22 @@ function RegisterView({ session, accountName, onLogout }) {
   const [editDate, setEditDate] = useState("");
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  const movementsRequestRef = useRef(0);
   const { askConfirmation, confirmationDialog } = useConfirmationDialog();
 
-  async function loadMovements() {
+  async function loadMovements({ showError = true } = {}) {
+    const requestId = ++movementsRequestRef.current;
     setLoading(true);
     try {
       const data = await apiRequest("/api/v1/transactions?limit=12", session);
+      if (requestId !== movementsRequestRef.current) return false;
       setMovements(data);
+      return true;
     } catch (error) {
-      setNotice(error.message);
+      if (showError && requestId === movementsRequestRef.current) setNotice(error.message);
+      return false;
     } finally {
-      setLoading(false);
+      if (requestId === movementsRequestRef.current) setLoading(false);
     }
   }
 
@@ -806,7 +806,7 @@ function RegisterView({ session, accountName, onLogout }) {
   useEffect(() => {
     loadMovements();
     loadCategories();
-  }, [session]);
+  }, [sessionGeneration]);
 
   function registerMovement(event) {
     event.preventDefault();
@@ -892,7 +892,7 @@ function RegisterView({ session, accountName, onLogout }) {
 
     setConfirmBusy(true);
     try {
-      await apiRequest("/api/v1/transactions", session, {
+      const created = await apiRequest("/api/v1/transactions", session, {
         method: "POST",
         body: JSON.stringify({
           ...pendingMovement,
@@ -905,7 +905,8 @@ function RegisterView({ session, accountName, onLogout }) {
       setPendingMovement(null);
       setText("");
       setNotice("Movimentação confirmada");
-      await loadMovements();
+      setMovements((current) => [created, ...current.filter((item) => item.id !== created.id)].slice(0, 12));
+      if (!(await loadMovements({ showError: false }))) setNotice("Movimentação confirmada. A lista será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -940,7 +941,7 @@ function RegisterView({ session, accountName, onLogout }) {
 
     setEditBusy(true);
     try {
-      await apiRequest(`/api/v1/transactions/${editingMovement.id}`, session, {
+      const updated = await apiRequest(`/api/v1/transactions/${editingMovement.id}`, session, {
         method: "PATCH",
         body: JSON.stringify({
           description,
@@ -952,7 +953,8 @@ function RegisterView({ session, accountName, onLogout }) {
       });
       setEditingMovement(null);
       setNotice("Movimentação atualizada");
-      await loadMovements();
+      setMovements((current) => current.map((item) => item.id === updated.id ? updated : item));
+      if (!(await loadMovements({ showError: false }))) setNotice("Movimentação atualizada. A lista será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -980,8 +982,9 @@ function RegisterView({ session, accountName, onLogout }) {
     try {
       await apiRequest(`/api/v1/transactions/${movement.id}`, session, { method: "DELETE" });
       if (editingMovement?.id === movement.id) setEditingMovement(null);
+      setMovements((current) => current.filter((item) => item.id !== movement.id));
       setNotice("Movimentação excluída");
-      await loadMovements();
+      if (!(await loadMovements({ showError: false }))) setNotice("Movimentação excluída. A lista será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     }
@@ -1002,7 +1005,8 @@ function RegisterView({ session, accountName, onLogout }) {
         body: JSON.stringify({ status: "completed" }),
       });
       setNotice("Movimentação confirmada");
-      await loadMovements();
+      setMovements((current) => current.map((item) => item.id === movement.id ? { ...item, status: "completed" } : item));
+      if (!(await loadMovements({ showError: false }))) setNotice("Movimentação confirmada. A lista será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -1281,7 +1285,7 @@ const emptyCommitment = {
   current_installment: "1",
 };
 
-function SettingsView({ session, accountName, onLogout }) {
+export function SettingsView({ session, sessionGeneration, accountName, onLogout }) {
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState({ auto_confirm_income: false, default_due_rule: "fixed_day", default_business_day_number: 5 });
   const [loading, setLoading] = useState(true);
@@ -1300,7 +1304,7 @@ function SettingsView({ session, accountName, onLogout }) {
       })
       .catch((error) => setNotice(error.message))
       .finally(() => setLoading(false));
-  }, [session]);
+  }, [sessionGeneration]);
 
   async function saveSettings(event) {
     event.preventDefault();
@@ -1407,7 +1411,7 @@ function SettingsView({ session, accountName, onLogout }) {
   );
 }
 
-function DataView({ session, accountName, onLogout }) {
+export function DataView({ session, sessionGeneration, accountName, onLogout }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [importFile, setImportFile] = useState(null);
@@ -1417,15 +1421,10 @@ function DataView({ session, accountName, onLogout }) {
     setBusy(true);
     setNotice("");
     try {
-      const response = await fetch(`${API_URL}/api/v1/transactions/export`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+      const file = await apiRequest("/api/v1/transactions/export", session, {
+        responseType: "blob",
+        skipCache: true,
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(formatApiError(body, "Não foi possível exportar os registros."));
-      }
-
-      const file = await response.blob();
       const url = URL.createObjectURL(file);
       const link = document.createElement("a");
       link.href = url;
@@ -1450,16 +1449,12 @@ function DataView({ session, accountName, onLogout }) {
     try {
       const formData = new FormData();
       formData.append("file", importFile);
-      const response = await fetch(`${API_URL}/api/v1/transactions/import/preview`, {
+      const data = await apiRequest("/api/v1/transactions/import/preview", session, {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
         body: formData,
+        skipCache: true,
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(formatApiError(body, "Não foi possível analisar a planilha."));
-      }
-      setPreview(await response.json());
+      setPreview(data);
       setNotice("Planilha analisada. Nada foi salvo.");
     } catch (error) {
       setNotice(error.message);
@@ -1623,7 +1618,7 @@ function DataView({ session, accountName, onLogout }) {
   );
 }
 
-function BudgetView({ session, accountName, onLogout }) {
+export function BudgetView({ session, sessionGeneration, accountName, onLogout }) {
   const [budget, setBudget] = useState(null);
   const [categories, setCategories] = useState([]);
   const [baseDraft, setBaseDraft] = useState({ base_mode: "total_income", income_category_id: "", manual_amount: "" });
@@ -1635,7 +1630,7 @@ function BudgetView({ session, accountName, onLogout }) {
   const [busyAction, setBusyAction] = useState("");
   const [notice, setNotice] = useState("");
 
-  async function loadBudget(showLoading = true) {
+  async function loadBudget(showLoading = true, showError = true) {
     if (showLoading) setLoading(true);
     try {
       const [budgetData, categoryData] = await Promise.all([
@@ -1656,15 +1651,17 @@ function BudgetView({ session, accountName, onLogout }) {
         }]),
       ));
     } catch (error) {
-      setNotice(error.message);
+      if (showError) setNotice(error.message);
+      return false;
     } finally {
       if (showLoading) setLoading(false);
     }
+    return true;
   }
 
   useEffect(() => {
     loadBudget();
-  }, [session, selectedPeriod.year, selectedPeriod.month]);
+  }, [sessionGeneration, selectedPeriod.year, selectedPeriod.month]);
 
   const incomeCategories = categories.filter((category) => category.kind === "income" || category.kind === "both");
   const expenseCategories = categories.filter((category) => category.kind === "expense" || category.kind === "both");
@@ -1723,8 +1720,8 @@ function BudgetView({ session, accountName, onLogout }) {
         method: "PATCH",
         body: JSON.stringify(payload),
       });
-      await loadBudget(false);
       setNotice("Base da distribuição atualizada.");
+      if (!(await loadBudget(false, false))) setNotice("Base da distribuição atualizada. A visão será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -1752,8 +1749,8 @@ function BudgetView({ session, accountName, onLogout }) {
       });
       setSelectedCategoryId("");
       setNewAllocation({ mode: "fixed_amount", value: "" });
-      await loadBudget(false);
       setNotice("Categoria incluída na distribuição.");
+      if (!(await loadBudget(false, false))) setNotice("Categoria incluída na distribuição. A visão será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -1780,8 +1777,8 @@ function BudgetView({ session, accountName, onLogout }) {
         method: "PATCH",
         body: JSON.stringify(allocationPayload(draft)),
       });
-      await loadBudget(false);
       setNotice("Fração atualizada.");
+      if (!(await loadBudget(false, false))) setNotice("Fração atualizada. A visão será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -1794,8 +1791,8 @@ function BudgetView({ session, accountName, onLogout }) {
     setNotice("");
     try {
       await apiRequest(`/api/v1/budget/allocations/${categoryId}${periodQuery}`, session, { method: "DELETE" });
-      await loadBudget(false);
       setNotice("Categoria removida da distribuição.");
+      if (!(await loadBudget(false, false))) setNotice("Categoria removida da distribuição. A visão será atualizada quando a API voltar.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -2033,7 +2030,7 @@ function BudgetView({ session, accountName, onLogout }) {
   );
 }
 
-function PlanningView({ session, accountName, onLogout }) {
+export function PlanningView({ session, sessionGeneration, accountName, onLogout }) {
   const [commitments, setCommitments] = useState([]);
   const [categories, setCategories] = useState([]);
   const [settings, setSettings] = useState(null);
@@ -2043,9 +2040,11 @@ function PlanningView({ session, accountName, onLogout }) {
   const [busy, setBusy] = useState(false);
   const [recordingId, setRecordingId] = useState(null);
   const [notice, setNotice] = useState("");
+  const planningRequestRef = useRef(0);
   const { askConfirmation, confirmationDialog } = useConfirmationDialog();
 
-  async function loadPlanning() {
+  async function loadPlanning({ showError = true } = {}) {
+    const requestId = ++planningRequestRef.current;
     setLoading(true);
     try {
       const [commitmentData, categoryData, settingsData] = await Promise.all([
@@ -2053,6 +2052,7 @@ function PlanningView({ session, accountName, onLogout }) {
         apiRequest("/api/v1/categories", session),
         apiRequest("/api/v1/settings", session),
       ]);
+      if (requestId !== planningRequestRef.current) return false;
       setCommitments(commitmentData);
       setCategories(categoryData);
       setSettings(settingsData);
@@ -2062,15 +2062,17 @@ function PlanningView({ session, accountName, onLogout }) {
         business_day_number: String(settingsData.default_business_day_number),
       });
     } catch (error) {
-      setNotice(error.message);
+      if (showError && requestId === planningRequestRef.current) setNotice(error.message);
+      return false;
     } finally {
-      setLoading(false);
+      if (requestId === planningRequestRef.current) setLoading(false);
     }
+    return true;
   }
 
   useEffect(() => {
     loadPlanning();
-  }, [session]);
+  }, [sessionGeneration]);
 
   function updateForm(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -2184,7 +2186,7 @@ function PlanningView({ session, accountName, onLogout }) {
         total_installments: installmentTotal,
         current_installment: installmentCurrent,
       };
-      await apiRequest(
+      const saved = await apiRequest(
         editingId ? `/api/v1/commitments/${editingId}` : "/api/v1/commitments",
         session,
         { method: editingId ? "PATCH" : "POST", body: JSON.stringify(payload) },
@@ -2194,7 +2196,10 @@ function PlanningView({ session, accountName, onLogout }) {
       } else {
         setNotice("Compromisso adicionado ao planejamento");
       }
-      await loadPlanning();
+      setCommitments((current) => editingId
+        ? current.map((item) => item.id === saved.id ? saved : item)
+        : [saved, ...current]);
+      if (!(await loadPlanning({ showError: false }))) setNotice("Compromisso salvo. A lista será atualizada quando a API voltar.");
       setEditingId(null);
       setForm({
         ...emptyCommitment,
@@ -2417,7 +2422,7 @@ function PlanningView({ session, accountName, onLogout }) {
   );
 }
 
-function CategoriesView({ session, accountName, onLogout }) {
+export function CategoriesView({ session, sessionGeneration, accountName, onLogout }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
@@ -2443,7 +2448,7 @@ function CategoriesView({ session, accountName, onLogout }) {
 
   useEffect(() => {
     loadCategories();
-  }, [session]);
+  }, [sessionGeneration]);
 
   async function createCategory(event) {
     event.preventDefault();
@@ -2614,8 +2619,42 @@ function CategoriesView({ session, accountName, onLogout }) {
   );
 }
 
+export function AuthenticatedPage({ View }) {
+  const { session, authReady, authError: providerAuthError, sessionGeneration } = useSession();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) setAuthError(error.message);
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    await getSupabaseBrowserClient().auth.signOut();
+  }
+
+  if (!authReady) return <main className="authLoading">Abrindo o Cifro...</main>;
+  if (!session) {
+    return <Login email={email} password={password} setEmail={setEmail} setPassword={setPassword} onSubmit={handleLogin} error={providerAuthError || authError} busy={authBusy} />;
+  }
+
+  return <View session={session} sessionGeneration={sessionGeneration} accountName={session.user.email?.split("@")[0] || "Conta pessoal"} onLogout={handleLogout} />;
+}
+
 export default function Home({ view = "dashboard" }) {
-  const { session, authReady, authError: providerAuthError } = useSession();
+  const { session, authReady, authError: providerAuthError, sessionGeneration } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -2641,7 +2680,7 @@ export default function Home({ view = "dashboard" }) {
     if (view !== "dashboard") return;
     if (session) loadDashboard(session);
     else setDashboard(null);
-  }, [session, view]);
+  }, [sessionGeneration, view]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -2684,31 +2723,31 @@ export default function Home({ view = "dashboard" }) {
   const accountName = session.user.email?.split("@")[0] || "Conta pessoal";
 
   if (view === "register") {
-    return <RegisterView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <RegisterView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "categories") {
-    return <CategoriesView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <CategoriesView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "planning") {
-    return <PlanningView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <PlanningView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "simulator") {
-    return <SimulatorView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <SimulatorView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "budget") {
-    return <BudgetView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <BudgetView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "settings") {
-    return <SettingsView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <SettingsView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   if (view === "data") {
-    return <DataView session={session} accountName={accountName} onLogout={handleLogout} />;
+    return <DataView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
   }
 
   const current = dashboard?.current || { income: 0, expenses: 0, available: 0 };

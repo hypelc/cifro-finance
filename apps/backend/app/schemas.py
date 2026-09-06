@@ -75,6 +75,8 @@ class SimulationSource(StrEnum):
 class SimulationCreate(BaseModel):
     name: str = Field(default="Nova simulação", min_length=1, max_length=120)
     reference: str | None = Field(default=None, max_length=120)
+    period_year: int | None = Field(default=None, ge=2000, le=2100)
+    period_month: int | None = Field(default=None, ge=1, le=12)
 
     @field_validator("name")
     @classmethod
@@ -91,10 +93,18 @@ class SimulationCreate(BaseModel):
             return None
         return value.strip() or None
 
+    @model_validator(mode="after")
+    def validate_period(self):
+        if (self.period_year is None) != (self.period_month is None):
+            raise ValueError("Simulation period requires both period_year and period_month")
+        return self
+
 
 class SimulationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     reference: str | None = Field(default=None, max_length=120)
+    period_year: int | None = Field(default=None, ge=2000, le=2100)
+    period_month: int | None = Field(default=None, ge=1, le=12)
 
     @field_validator("name", "reference")
     @classmethod
@@ -105,6 +115,12 @@ class SimulationUpdate(BaseModel):
         if not normalized:
             raise ValueError("Text must contain at least one non-space character")
         return normalized
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        if (self.period_year is None) != (self.period_month is None):
+            raise ValueError("Simulation period requires both period_year and period_month")
+        return self
 
 
 class SimulationItemCreate(BaseModel):
@@ -168,6 +184,8 @@ class SimulationItemRead(SimulationItemCreate):
     simulation_id: UUID
     position: int
     category_name: str | None = None
+    planning_commitment_id: UUID | None = None
+    planning_occurrence_on: date | None = None
     created_at: datetime
     updated_at: datetime
 

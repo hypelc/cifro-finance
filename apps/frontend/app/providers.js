@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { clearApiCache } from "../lib/api";
 import { getSupabaseBrowserClient } from "../lib/supabase";
 
 const SessionContext = createContext(null);
@@ -9,10 +10,24 @@ export function SessionProvider({ children }) {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [sessionGeneration, setSessionGeneration] = useState(0);
 
   useEffect(() => {
     let mounted = true;
     let supabase;
+    let lastUserId = null;
+
+    function applySession(nextSession) {
+      if (!mounted) return;
+      const nextUserId = nextSession?.user?.id || null;
+      if (nextUserId !== lastUserId) {
+        clearApiCache();
+        lastUserId = nextUserId;
+        setSessionGeneration((current) => current + 1);
+      }
+      setSession(nextSession);
+      setAuthReady(true);
+    }
 
     try {
       supabase = getSupabaseBrowserClient();
@@ -27,15 +42,14 @@ export function SessionProvider({ children }) {
       if (error) {
         setAuthError(error.message);
       } else {
-        setSession(data.session);
+        applySession(data.session);
       }
       setAuthReady(true);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
-      setSession(nextSession);
-      setAuthReady(true);
+      applySession(nextSession);
     });
 
     return () => {
@@ -45,7 +59,7 @@ export function SessionProvider({ children }) {
   }, []);
 
   return (
-    <SessionContext.Provider value={{ session, authReady, authError }}>
+    <SessionContext.Provider value={{ session, authReady, authError, sessionGeneration }}>
       {children}
     </SessionContext.Provider>
   );

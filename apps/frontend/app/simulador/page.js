@@ -1,4 +1,4 @@
-import Home from "../page";
+import { SimulatorEntry } from "../route-entry";
 
 export const metadata = {
   title: "Simulador — Cifro",
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function SimulatorPage() {
-  return <Home view="simulator" />;
+  return <SimulatorEntry />;
 }

@@ -1,4 +1,4 @@
-import Home from "../page";
+import { RegisterEntry } from "../route-entry";
 
 export const metadata = {
   title: "Registrar — Cifro",
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function RegisterPage() {
-  return <Home view="register" />;
+  return <RegisterEntry />;
 }

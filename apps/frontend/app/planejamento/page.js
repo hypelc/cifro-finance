@@ -1,5 +1,5 @@
-import Home from "../page";
+import { PlanningEntry } from "../route-entry";
 
 export default function PlanningPage() {
-  return <Home view="planning" />;
+  return <PlanningEntry />;
 }

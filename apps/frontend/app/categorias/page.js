@@ -1,5 +1,5 @@
-import Home from "../page";
+import { CategoriesEntry } from "../route-entry";
 
 export default function CategoriesPage() {
-  return <Home view="categories" />;
+  return <CategoriesEntry />;
 }

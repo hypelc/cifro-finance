@@ -1,4 +1,4 @@
-import Home from "../page";
+import { DataEntry } from "../route-entry";
 
 export const metadata = {
   title: "Dados — Cifro",
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function DataPage() {
-  return <Home view="data" />;
+  return <DataEntry />;
 }

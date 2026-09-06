@@ -1,23 +1,28 @@
 import csv
 import io
+import logging
+import random
 from datetime import date, datetime
 from decimal import Decimal
 import re
+import time
 import unicodedata
+from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
 import psycopg
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from psycopg.errors import CheckViolation, UniqueViolation
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from .config import settings
-from .db import get_connection
+from .db import close_pool, get_connection, init_pool
 from .domain.calendar import month_bounds, next_month
 from .domain.commitments import (
     commitment_due_day,
@@ -69,10 +74,23 @@ from .schemas import (
 from .security import current_user_id
 
 
+logger = logging.getLogger("cifro.api")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_pool()
+    try:
+        yield
+    finally:
+        close_pool()
+
+
 app = FastAPI(
     title="Cifro API",
     version="0.1.0",
     description="API pessoal do gerenciador financeiro Cifro.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -81,7 +99,59 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+def _request_route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    return getattr(route, "path", request.url.path)
+
+
+@app.middleware("http")
+async def protect_and_measure_requests(request: Request, call_next):
+    request_id = request.headers.get("x-request-id")
+    try:
+        request_id = str(UUID(request_id)) if request_id else ""
+    except (ValueError, AttributeError):
+        request_id = ""
+    if not request_id:
+        from uuid import uuid4
+
+        request_id = str(uuid4())
+
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        if settings.perf_log_enabled and random.random() <= settings.perf_log_sample_rate:
+            logger.exception(
+                "http_request_failed request_id=%s method=%s route=%s duration_ms=%.1f",
+                request_id,
+                request.method,
+                _request_route_template(request),
+                (time.perf_counter() - started) * 1000,
+            )
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        response.headers["X-Request-ID"] = request_id
+        if request.url.path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+    response.headers["X-Request-ID"] = request_id
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["Cache-Control"] = "private, no-store"
+
+    if settings.perf_log_enabled and random.random() <= settings.perf_log_sample_rate:
+        logger.info(
+            "http_request request_id=%s method=%s route=%s status=%s duration_ms=%.1f",
+            request_id,
+            request.method,
+            _request_route_template(request),
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+        )
+    return response
 
 router = APIRouter(
     prefix="/api/v1",
@@ -2057,7 +2127,8 @@ def delete_transaction(transaction_id: UUID, user_id: UUID = Depends(current_use
 
 
 SIMULATION_COLUMNS = """
-  s.id, s.user_id, s.name, s.reference, s.created_at, s.updated_at
+  s.id, s.user_id, s.name, s.reference, s.period_year, s.period_month,
+  s.created_at, s.updated_at
 """
 
 
@@ -2101,6 +2172,7 @@ def simulation_items(connection, simulation_id: UUID, user_id: UUID) -> list[dic
         select
           si.id, si.simulation_id, si.user_id, si.position, si.description,
           si.direction, si.amount, si.category_id, si.source,
+          si.planning_commitment_id, si.planning_occurrence_on,
           si.created_at, si.updated_at, c.name as category_name
         from public.simulation_items si
         left join public.categories c
@@ -2204,7 +2276,8 @@ def list_simulations(user_id: UUID = Depends(current_user_id)) -> list[dict]:
         rows = connection.execute(
             """
             select
-              s.id, s.name, s.reference, s.created_at, s.updated_at,
+              s.id, s.name, s.reference, s.period_year, s.period_month,
+              s.created_at, s.updated_at,
               count(si.id)::integer as item_count,
               coalesce(sum(case when si.direction = 'income' then si.amount else 0 end), 0) as total_income,
               coalesce(sum(case when si.direction = 'expense' then si.amount else 0 end), 0) as total_expenses
@@ -2212,7 +2285,8 @@ def list_simulations(user_id: UUID = Depends(current_user_id)) -> list[dict]:
             left join public.simulation_items si
               on si.simulation_id = s.id and si.user_id = s.user_id
             where s.user_id = %s
-            group by s.id, s.name, s.reference, s.created_at, s.updated_at
+            group by s.id, s.name, s.reference, s.period_year, s.period_month,
+              s.created_at, s.updated_at
             order by s.updated_at desc, s.created_at desc
             """,
             (user_id,),
@@ -2230,11 +2304,11 @@ def create_simulation(payload: SimulationCreate, user_id: UUID = Depends(current
     with get_connection() as connection:
         simulation = connection.execute(
             """
-            insert into public.simulations (user_id, name, reference)
-            values (%s, %s, %s)
+            insert into public.simulations (user_id, name, reference, period_year, period_month)
+            values (%s, %s, %s, %s, %s)
             returning id
             """,
-            (user_id, payload.name, payload.reference),
+            (user_id, payload.name, payload.reference, payload.period_year, payload.period_month),
         ).fetchone()
         return build_simulation(connection, simulation["id"], user_id)
 
@@ -2259,7 +2333,7 @@ def update_simulation(
 
     assignments = []
     parameters = []
-    for field in ("name", "reference"):
+    for field in ("name", "reference", "period_year", "period_month"):
         if field in values:
             assignments.append(f"{field} = %s")
             parameters.append(values[field])
@@ -2287,11 +2361,17 @@ def duplicate_simulation(simulation_id: UUID, user_id: UUID = Depends(current_us
         copied_name = f"{original['name']} (cópia)"[:120]
         copy = connection.execute(
             """
-            insert into public.simulations (user_id, name, reference)
-            values (%s, %s, %s)
+            insert into public.simulations (user_id, name, reference, period_year, period_month)
+            values (%s, %s, %s, %s, %s)
             returning id
             """,
-            (user_id, copied_name, original["reference"]),
+            (
+                user_id,
+                copied_name,
+                original["reference"],
+                original["period_year"],
+                original["period_month"],
+            ),
         ).fetchone()
         connection.execute(
             """
@@ -2456,7 +2536,9 @@ def list_simulation_planning_options(
     user_id: UUID = Depends(current_user_id),
 ) -> list[dict]:
     with get_connection() as connection:
-        get_simulation(connection, simulation_id, user_id)
+        simulation = get_simulation(connection, simulation_id, user_id)
+        if not simulation["period_year"] or not simulation["period_month"]:
+            return []
         rows = connection.execute(
             """
             select
@@ -2472,13 +2554,32 @@ def list_simulation_planning_options(
             """,
             (user_id,),
         ).fetchall()
+        existing_origins = connection.execute(
+            """
+            select planning_commitment_id, planning_occurrence_on
+            from public.simulation_items
+            where simulation_id = %s and user_id = %s
+              and source = 'planning'
+              and planning_commitment_id is not null
+              and planning_occurrence_on is not null
+            """,
+            (simulation_id, user_id),
+        ).fetchall()
 
+    existing_origin_keys = {
+        (row["planning_commitment_id"], row["planning_occurrence_on"])
+        for row in existing_origins
+    }
     options = []
     for row in rows:
-        projected_date = next_projected_commitment_date(row, date.today())
-        if projected_date is None and row["commitment_type"] == "installment":
-            projected_date = row["next_due_on"]
+        projected_date = projected_commitment_date(
+            row,
+            simulation["period_year"],
+            simulation["period_month"],
+        )
         if projected_date is None:
+            continue
+        if (row["id"], projected_date) in existing_origin_keys:
             continue
         option = dict(row)
         option["next_due_on"] = projected_date
@@ -2496,11 +2597,15 @@ def import_simulation_planning_items(
         raise HTTPException(status_code=400, detail="Planning items cannot be selected more than once")
 
     with get_connection() as connection:
-        get_simulation(connection, simulation_id, user_id)
+        simulation = get_simulation(connection, simulation_id, user_id)
+        if not simulation["period_year"] or not simulation["period_month"]:
+            raise HTTPException(status_code=400, detail="Defina o ano e o mês do cenário antes de importar o planejamento")
         for commitment_id in payload.commitment_ids:
             commitment = connection.execute(
                 """
-                select id, name, amount, direction, category_id
+                select id, name, amount, direction, category_id,
+                  commitment_type, frequency, due_rule, due_day, due_month,
+                  business_day_number, starts_on, next_due_on, ends_on
                 from public.commitments
                 where id = %s and user_id = %s and is_active = true
                 """,
@@ -2509,6 +2614,13 @@ def import_simulation_planning_items(
             if not commitment:
                 raise HTTPException(status_code=400, detail="One or more planning items are unavailable")
             validate_simulation_category(connection, commitment["category_id"], user_id)
+            occurrence_on = projected_commitment_date(
+                commitment,
+                simulation["period_year"],
+                simulation["period_month"],
+            )
+            if occurrence_on is None:
+                raise HTTPException(status_code=400, detail="One ou mais itens do planejamento não ocorrem no período do cenário")
             position = connection.execute(
                 """
                 select coalesce(max(position) + 1, 0) as next_position
@@ -2517,13 +2629,20 @@ def import_simulation_planning_items(
                 """,
                 (simulation_id, user_id),
             ).fetchone()["next_position"]
-            connection.execute(
+            inserted = connection.execute(
                 """
                 insert into public.simulation_items (
                   simulation_id, user_id, position, description, direction,
-                  amount, category_id, source
+                  amount, category_id, source, planning_commitment_id,
+                  planning_occurrence_on
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, 'planning')
+                values (%s, %s, %s, %s, %s, %s, %s, 'planning', %s, %s)
+                on conflict (simulation_id, user_id, planning_commitment_id, planning_occurrence_on)
+                  where source = 'planning'
+                    and planning_commitment_id is not null
+                    and planning_occurrence_on is not null
+                do nothing
+                returning id
                 """,
                 (
                     simulation_id,
@@ -2533,8 +2652,12 @@ def import_simulation_planning_items(
                     commitment["direction"],
                     commitment["amount"],
                     commitment["category_id"],
+                    commitment["id"],
+                    occurrence_on,
                 ),
-            )
+            ).fetchone()
+            if not inserted:
+                raise HTTPException(status_code=409, detail="Um ou mais itens do planejamento já foram importados para este cenário")
         touch_simulation(connection, simulation_id, user_id)
         return build_simulation(connection, simulation_id, user_id)
 

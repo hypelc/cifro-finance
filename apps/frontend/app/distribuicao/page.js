@@ -1,4 +1,4 @@
-import Home from "../page";
+import { BudgetEntry } from "../route-entry";
 
 export const metadata = {
   title: "Distribuição — Cifro",
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function BudgetPage() {
-  return <Home view="budget" />;
+  return <BudgetEntry />;
 }

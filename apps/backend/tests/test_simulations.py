@@ -41,6 +41,12 @@ class SimulationSchemaTests(unittest.TestCase):
         self.assertEqual(payload.name, "Comprar notebook")
         self.assertEqual(payload.reference, "Setembro")
 
+    def test_simulation_period_is_structured_and_requires_a_pair(self):
+        payload = SimulationCreate(name="Setembro", period_year=2026, period_month=9)
+        self.assertEqual((payload.period_year, payload.period_month), (2026, 9))
+        with self.assertRaises(ValidationError):
+            SimulationCreate(name="Sem mês", period_year=2026)
+
     def test_item_requires_positive_amount(self):
         with self.assertRaises(ValidationError):
             SimulationItemCreate(description="Compra", direction="expense", amount="-10")

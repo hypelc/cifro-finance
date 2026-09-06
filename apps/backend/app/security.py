@@ -30,7 +30,7 @@ def current_user_id(
                 "Authorization": f"Bearer {credentials.credentials}",
             },
         )
-        with urlopen(request, timeout=5) as response:
+        with urlopen(request, timeout=settings.auth_http_timeout_seconds) as response:
             user = json.load(response)
         return UUID(user["id"])
     except HTTPError as error:
