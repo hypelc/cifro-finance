@@ -264,6 +264,7 @@ class TransactionRead(TransactionCreate):
     created_at: datetime
     updated_at: datetime
     category_name: str | None = None
+    commitment_name: str | None = None
 
 
 class CommitmentCreate(BaseModel):

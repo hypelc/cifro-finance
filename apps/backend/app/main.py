@@ -1383,6 +1383,8 @@ def validate_commitment_for_transaction(
     direction: str,
     category_id: UUID | None,
     user_id: UUID,
+    *,
+    allow_existing_category_mismatch: bool = False,
 ) -> dict | None:
     if not commitment_id:
         return None
@@ -1402,7 +1404,7 @@ def validate_commitment_for_transaction(
             status_code=400,
             detail="Commitment is not compatible with this direction",
         )
-    if commitment["category_id"] != category_id:
+    if not allow_existing_category_mismatch and commitment["category_id"] != category_id:
         raise HTTPException(
             status_code=409,
             detail={
@@ -1411,33 +1413,6 @@ def validate_commitment_for_transaction(
             },
         )
     return commitment
-
-
-def validate_commitment_category_change(
-    connection,
-    commitment_id: UUID,
-    category_id: UUID | None,
-    user_id: UUID,
-) -> None:
-    linked_transaction = connection.execute(
-        """
-        select id
-        from public.transactions
-        where commitment_id = %s
-          and user_id = %s
-          and category_id is distinct from %s
-        limit 1
-        """,
-        (commitment_id, user_id, category_id),
-    ).fetchone()
-    if linked_transaction:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "commitment_category_mismatch",
-                "message": "Não é possível trocar a categoria deste compromisso enquanto houver movimentações vinculadas com outra categoria.",
-            },
-        )
 
 
 @router.get("/commitments", response_model=list[CommitmentRead])
@@ -1557,51 +1532,39 @@ def update_commitment(
             payload.direction.value,
             user_id,
         )
-        try:
-            validate_commitment_category_change(
-                connection, commitment_id, payload.category_id, user_id
-            )
-            row = connection.execute(
-                """
-                update public.commitments
-                set category_id = %s, name = %s, commitment_type = %s,
-                    direction = %s, amount = %s, frequency = %s,
-                    due_rule = %s, due_day = %s, due_month = %s, business_day_number = %s,
-                    starts_on = %s, next_due_on = %s, ends_on = %s,
-                    total_installments = %s, current_installment = %s
-                where id = %s and user_id = %s and is_active = true
-                returning id, name, commitment_type, direction, amount, frequency,
-                  due_rule, due_day, due_month, business_day_number, starts_on, next_due_on, ends_on, category_id,
-                  total_installments, current_installment, is_active, created_at
-                """,
-                (
-                    payload.category_id,
-                    payload.name.strip(),
-                    payload.commitment_type.value,
-                    payload.direction.value,
-                    payload.amount,
-                    payload.frequency.value,
-                    payload.due_rule.value,
-                    payload.due_day,
-                    payload.due_month,
-                    payload.business_day_number,
-                    payload.starts_on,
-                    next_due_on,
-                    payload.ends_on,
-                    payload.total_installments,
-                    payload.current_installment,
-                    commitment_id,
-                    user_id,
-                ),
-            ).fetchone()
-        except CheckViolation as error:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "commitment_category_mismatch",
-                    "message": "Não é possível trocar a categoria deste compromisso enquanto houver movimentações vinculadas com outra categoria.",
-                },
-            ) from error
+        row = connection.execute(
+            """
+            update public.commitments
+            set category_id = %s, name = %s, commitment_type = %s,
+                direction = %s, amount = %s, frequency = %s,
+                due_rule = %s, due_day = %s, due_month = %s, business_day_number = %s,
+                starts_on = %s, next_due_on = %s, ends_on = %s,
+                total_installments = %s, current_installment = %s
+            where id = %s and user_id = %s and is_active = true
+            returning id, name, commitment_type, direction, amount, frequency,
+              due_rule, due_day, due_month, business_day_number, starts_on, next_due_on, ends_on, category_id,
+              total_installments, current_installment, is_active, created_at
+            """,
+            (
+                payload.category_id,
+                payload.name.strip(),
+                payload.commitment_type.value,
+                payload.direction.value,
+                payload.amount,
+                payload.frequency.value,
+                payload.due_rule.value,
+                payload.due_day,
+                payload.due_month,
+                payload.business_day_number,
+                payload.starts_on,
+                next_due_on,
+                payload.ends_on,
+                payload.total_installments,
+                payload.current_installment,
+                commitment_id,
+                user_id,
+            ),
+        ).fetchone()
 
     if not row:
         raise HTTPException(status_code=404, detail="Commitment not found")
@@ -1655,14 +1618,14 @@ def record_commitment(
                 (pending_transaction["id"], user_id),
             ).fetchone()
             category_name = None
-            if commitment["category_id"]:
+            if confirmed_transaction["category_id"]:
                 category = connection.execute(
                     """
                     select name
                     from public.categories
                     where id = %s and user_id = %s
                     """,
-                    (commitment["category_id"], user_id),
+                    (confirmed_transaction["category_id"], user_id),
                 ).fetchone()
                 category_name = category["name"] if category else None
 
@@ -1672,6 +1635,7 @@ def record_commitment(
             updated_commitment = dict(commitment)
             updated_commitment["category_name"] = category_name
             confirmed_transaction["category_name"] = category_name
+            confirmed_transaction["commitment_name"] = commitment["name"]
             return {"transaction": confirmed_transaction, "commitment": updated_commitment}
 
         scheduled_due_on = next_projected_commitment_date(commitment, date.today())
@@ -1760,6 +1724,7 @@ def record_commitment(
             category_name = category["name"] if category else None
 
     transaction["category_name"] = category_name
+    transaction["commitment_name"] = commitment["name"]
     updated_commitment["category_name"] = category_name
     return {"transaction": transaction, "commitment": updated_commitment}
 
@@ -1803,10 +1768,13 @@ def list_transactions(
             select
               t.id, t.description, t.amount, t.direction, t.occurred_on,
               t.category_id, t.commitment_id, t.status, t.notes,
-              t.created_at, t.updated_at, c.name as category_name
+              t.created_at, t.updated_at, c.name as category_name,
+              cm.name as commitment_name
             from public.transactions t
             left join public.categories c
               on c.id = t.category_id and c.user_id = t.user_id
+            left join public.commitments cm
+              on cm.id = t.commitment_id and cm.user_id = t.user_id
             where {' and '.join(filters)}
             order by t.occurred_on desc, t.created_at desc
             limit %s offset %s
@@ -2025,7 +1993,7 @@ def create_transaction(payload: TransactionCreate, user_id: UUID = Depends(curre
             payload.direction.value,
             user_id,
         )
-        validate_commitment_for_transaction(
+        commitment = validate_commitment_for_transaction(
             connection,
             payload.commitment_id,
             payload.direction.value,
@@ -2055,6 +2023,7 @@ def create_transaction(payload: TransactionCreate, user_id: UUID = Depends(curre
             ),
         ).fetchone()
     row["category_name"] = category["name"] if category else None
+    row["commitment_name"] = commitment["name"] if commitment else None
     return row
 
 
@@ -2096,6 +2065,52 @@ def update_transaction(
         parameters.append(value)
 
     with get_connection() as connection:
+        initial = connection.execute(
+            """
+            select id, direction, category_id, commitment_id
+            from public.transactions
+            where id = %s and user_id = %s
+            """,
+            (transaction_id, user_id),
+        ).fetchone()
+        if not initial:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+
+        # Linked edits use one lock order: commitment first, transaction second.
+        # This is also the order used by the planning flows that can create or
+        # confirm an occurrence.
+        commitment = None
+        if initial["commitment_id"]:
+            commitment = connection.execute(
+                """
+                select id, name, category_id, direction, is_active
+                from public.commitments
+                where id = %s and user_id = %s
+                for update
+                """,
+                (initial["commitment_id"], user_id),
+            ).fetchone()
+            if not commitment:
+                raise HTTPException(status_code=409, detail="Linked commitment is no longer available")
+
+        effective_direction = values.get("direction", initial["direction"])
+        if isinstance(effective_direction, Direction):
+            effective_direction = effective_direction.value
+        effective_category_id = values.get("category_id", initial["category_id"])
+        effective_commitment_id = values.get("commitment_id", initial["commitment_id"])
+
+        target_commitment = commitment if effective_commitment_id == initial["commitment_id"] else None
+        if effective_commitment_id and target_commitment is None:
+            target_commitment = connection.execute(
+                """
+                select id, name, category_id, direction, is_active
+                from public.commitments
+                where id = %s and user_id = %s
+                for update
+                """,
+                (effective_commitment_id, user_id),
+            ).fetchone()
+
         current = connection.execute(
             """
             select id, direction, category_id, commitment_id
@@ -2107,12 +2122,15 @@ def update_transaction(
         ).fetchone()
         if not current:
             raise HTTPException(status_code=404, detail="Transaction not found")
+        if current["commitment_id"] != initial["commitment_id"]:
+            raise HTTPException(status_code=409, detail="The transaction changed while it was being edited")
 
-        effective_direction = values.get("direction", current["direction"])
-        if isinstance(effective_direction, Direction):
-            effective_direction = effective_direction.value
-        effective_category_id = values.get("category_id", current["category_id"])
-        effective_commitment_id = values.get("commitment_id", current["commitment_id"])
+        category_changed = "category_id" in values and current["category_id"] != effective_category_id
+        correcting_linked_category = bool(
+            current["commitment_id"]
+            and effective_commitment_id == current["commitment_id"]
+            and category_changed
+        )
 
         category = None
         if effective_category_id and ({"category_id", "direction"} & values.keys()):
@@ -2133,12 +2151,25 @@ def update_transaction(
             ).fetchone()
 
         if effective_commitment_id and ({"commitment_id", "category_id", "direction"} & values.keys()):
+            if not target_commitment or not target_commitment["is_active"]:
+                raise HTTPException(status_code=400, detail="Commitment not found or inactive")
             validate_commitment_for_transaction(
                 connection,
                 effective_commitment_id,
                 effective_direction,
                 effective_category_id,
                 user_id,
+                allow_existing_category_mismatch=correcting_linked_category,
+            )
+
+        if correcting_linked_category:
+            connection.execute(
+                """
+                update public.commitments
+                set category_id = %s
+                where id = %s and user_id = %s
+                """,
+                (effective_category_id, current["commitment_id"], user_id),
             )
 
         parameters.extend([transaction_id, user_id])
@@ -2168,7 +2199,9 @@ def update_transaction(
             ).fetchone()
             category_name = category["name"] if category else None
 
-    row["category_name"] = category_name
+        row["category_name"] = category_name
+        row["commitment_name"] = target_commitment["name"] if target_commitment else None
+
     return row
 
 
@@ -2794,10 +2827,13 @@ def dashboard(
             select
               t.id, t.description, t.amount, t.direction, t.occurred_on,
               t.category_id, t.commitment_id, t.status, t.notes,
-              t.created_at, t.updated_at, c.name as category_name
+              t.created_at, t.updated_at, c.name as category_name,
+              cm.name as commitment_name
             from public.transactions t
             left join public.categories c
               on c.id = t.category_id and c.user_id = t.user_id
+            left join public.commitments cm
+              on cm.id = t.commitment_id and cm.user_id = t.user_id
             where t.user_id = %s
               and t.occurred_on >= %s and t.occurred_on < %s
             order by t.occurred_on desc, t.created_at desc

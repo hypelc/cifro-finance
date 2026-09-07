@@ -940,7 +940,19 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
       return;
     }
 
+    const categoryChanged = (editingMovement.category_id || null) !== (editCategoryId || null);
+    const linkedCategoryCorrection = Boolean(editingMovement.commitment_id && categoryChanged);
+    if (linkedCategoryCorrection) {
+      const confirmed = await askConfirmation({
+        title: "Atualizar categoria?",
+        message: `Esta movimentação pertence ao planejamento “${editingMovement.commitment_name || "este planejamento"}”. A nova categoria também será usada nos próximos registros desse planejamento. Os demais registros já existentes não serão alterados.`,
+        confirmLabel: "Confirmar alteração",
+      });
+      if (!confirmed) return;
+    }
+
     setEditBusy(true);
+    if (linkedCategoryCorrection) setNotice("Atualizando esta movimentação e os próximos registros...");
     try {
       const updated = await apiRequest(`/api/v1/transactions/${editingMovement.id}`, session, {
         method: "PATCH",
@@ -953,11 +965,12 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
         }),
       });
       setEditingMovement(null);
-      setNotice("Movimentação atualizada");
+      const successMessage = linkedCategoryCorrection ? "Categoria atualizada nesta movimentação e no planejamento." : "Movimentação atualizada";
+      setNotice(successMessage);
       setMovements((current) => current.map((item) => item.id === updated.id ? updated : item));
-      if (!(await loadMovements({ showError: false }))) setNotice("Movimentação atualizada. A lista será atualizada quando a API voltar.");
+      if (!(await loadMovements({ showError: false }))) setNotice(`${successMessage} A lista será atualizada quando a API voltar.`);
     } catch (error) {
-      setNotice(error.message);
+      setNotice(linkedCategoryCorrection ? "Não foi possível atualizar a categoria. Nenhuma alteração foi realizada." : error.message);
     } finally {
       setEditBusy(false);
     }
