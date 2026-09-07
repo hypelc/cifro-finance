@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase";
 import { apiRequest } from "../lib/api";
 import { useSession } from "./providers";
+import TurnstileWidget from "./components/TurnstileWidget";
 
 const MAX_DESCRIPTION_LENGTH = 160;
 
@@ -246,6 +247,22 @@ function BrandIdentity() {
 }
 
 export function Login({ email, password, setEmail, setPassword, onSubmit, error, busy }) {
+
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    if (!captchaToken || busy) return;
+
+    try {
+      await onSubmit(captchaToken);
+    } finally {
+      setCaptchaToken("");
+      setCaptchaResetKey((current) => current + 1);
+    }
+  }
   return (
     <main className="authShell">
       <section className="authIntro">
@@ -265,7 +282,7 @@ export function Login({ email, password, setEmail, setPassword, onSubmit, error,
           <h2 id="login-title">Entrar no Cifro</h2>
           <p className="authHint">Use o e-mail e a senha do usuário criado no Supabase.</p>
         </div>
-        <form className="authForm" onSubmit={onSubmit}>
+        <form className="authForm" onSubmit={handleSubmit}>
           <label htmlFor="email">E-mail</label>
           <input
             id="email"
@@ -284,8 +301,14 @@ export function Login({ email, password, setEmail, setPassword, onSubmit, error,
             autoComplete="current-password"
             required
           />
+            <TurnstileWidget
+            onVerify={setCaptchaToken}
+            resetKey={captchaResetKey}
+/>
           {error && <p className="formError" role="alert">{error}</p>}
-          <button type="submit" disabled={busy}>{busy ? "Entrando..." : "Entrar"}</button>
+          <button type="submit" disabled={busy || !captchaToken}>
+            {busy ? "Entrando..." : "Entrar"}
+          </button>
         </form>
       </section>
     </main>
@@ -2676,13 +2699,12 @@ export function AuthenticatedPage({ View }) {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
 
-  async function handleLogin(event) {
-    event.preventDefault();
+  async function handleLogin(captchaToken) {
     setAuthBusy(true);
     setAuthError("");
     try {
       const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({ email, password, options: { captchaToken } });
       if (error) setAuthError(error.message);
     } catch (error) {
       setAuthError(error.message);
@@ -2736,13 +2758,12 @@ export default function Home({ view = "dashboard" }) {
     else setDashboard(null);
   }, [sessionGeneration, view, selectedPeriod.year, selectedPeriod.month]);
 
-  async function handleLogin(event) {
-    event.preventDefault();
+  async function handleLogin(captchaToken) {
     setAuthBusy(true);
     setAuthError("");
     try {
       const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({ email, password, options: { captchaToken } });
       if (error) setAuthError(error.message);
     } catch (error) {
       setAuthError(error.message);
