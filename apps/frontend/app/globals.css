@@ -394,12 +394,42 @@ h2 { margin: 0; font-size: 21px; letter-spacing: -.6px; }
 .settingsContent { max-width: 1320px; }
 .settingsLayout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 76px; align-items: start; }
 .settingsMain { min-width: 0; }
+.settingsPreferencesForm { margin: 0; }
 .settingsIntro { max-width: 610px; padding: 70px 0 30px; }
 .settingsIntro h2 { max-width: 550px; margin-bottom: 13px; font-size: clamp(25px, 4vw, 38px); letter-spacing: -1.5px; line-height: 1.12; }
 .settingsIntro p:last-child { max-width: 510px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .settingsSection { padding: 22px 0 30px; }
 .settingsSectionHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .settingsSectionHeading h2 { font-size: 18px; letter-spacing: -.6px; }
+.settingsBadge.mfaEnabled { border-color: rgba(90, 203, 150, .32); color: var(--green); background: rgba(90, 203, 150, .08); }
+.mfaSettings { margin-top: 18px; border-top: 1px solid var(--line); }
+.mfaStatusText { margin-top: 18px; color: #9ca6ba; font-size: 13px; }
+.mfaFactorList { display: grid; margin-top: 18px; border-top: 1px solid var(--line-soft); }
+.mfaFactor { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 67px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.mfaFactor strong, .mfaFactor span { display: block; }
+.mfaFactor strong { margin-bottom: 5px; font-size: 13px; }
+.mfaFactor span { color: #8d98ad; font-size: 12px; }
+.mfaFactor button, .mfaPendingList button { border: 0; color: #aebdff; background: transparent; font-size: 12px; cursor: pointer; }
+.mfaFactorActions { display: flex; align-items: center; gap: 12px; }
+.mfaFactor .dangerTextButton { color: #d18a91; }
+.mfaFactor button:disabled, .mfaPendingList button:disabled { cursor: not-allowed; opacity: .5; }
+.mfaPendingList { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 14px; border: 1px solid rgba(224, 174, 93, .25); border-radius: 6px; color: #d8bd8b; background: rgba(224, 174, 93, .055); font-size: 12px; }
+.mfaEnrollment { display: grid; justify-items: start; gap: 18px; margin-top: 20px; padding: 20px; border: 1px solid #283652; border-radius: 7px; background: #0d1529; }
+.mfaEnrollmentSteps { display: grid; gap: 10px; }
+.mfaEnrollmentSteps div { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 9px; color: #aab3c6; font-size: 12px; line-height: 1.55; }
+.mfaEnrollmentSteps b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #091020; background: var(--blue-bright); font-size: 11px; }
+.mfaQrCode { width: min(230px, 100%); padding: 10px; border-radius: 6px; background: #fff; }
+.mfaSecret { max-width: 100%; color: #aeb8cc; font-size: 12px; }
+.mfaSecret summary { color: #aebdff; cursor: pointer; }
+.mfaSecret p { margin: 10px 0 7px; }
+.mfaSecret code { display: block; max-width: 100%; padding: 10px; border-radius: 4px; color: #e2e7f2; background: #080e1c; overflow-wrap: anywhere; user-select: all; }
+.mfaVerificationField { width: min(260px, 100%); }
+.mfaVerificationField input, .mfaCodeInput { letter-spacing: .28em; font-variant-numeric: tabular-nums; }
+.mfaEnrollmentActions { display: flex; gap: 10px; }
+.mfaAddButton { margin-top: 20px; }
+.authSecondaryButton { border: 1px solid #2b3854 !important; color: #aeb8cc !important; background: transparent !important; }
+.mfaBoundaryActions { display: grid; gap: 10px; margin-top: 22px; }
+.mfaBoundaryActions button { min-height: 45px; border: 0; border-radius: 4px; color: #f7f8fb; background: var(--blue); font-weight: 700; cursor: pointer; }
 .settingsBadge { color: #d8c08e; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .settingToggle { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 13px; align-items: center; margin-top: 24px; cursor: pointer; }
 .settingToggle input { position: absolute; opacity: 0; pointer-events: none; }

@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "../lib/supabase";
 import { apiRequest } from "../lib/api";
 import { useSession } from "./providers";
+import MfaChallenge from "./components/MfaChallenge";
+import MfaOffer from "./components/MfaOffer";
+import MfaSettings from "./components/MfaSettings";
 import TurnstileWidget from "./components/TurnstileWidget";
 
 const MAX_DESCRIPTION_LENGTH = 160;
@@ -200,6 +203,47 @@ function ConfirmationDialog({ title, message, confirmLabel = "Confirmar", cancel
         </div>
       </section>
     </div>
+  );
+}
+
+function SecureSessionBoundary({ children, onLogout }) {
+  const {
+    session,
+    mfaReady,
+    mfaEnrolled,
+    mfaRequired,
+    mfaError,
+    refreshMfaStatus,
+  } = useSession();
+
+  if (!mfaReady) return <main className="authLoading">Verificando a segurança da sessão...</main>;
+
+  if (mfaError) {
+    return (
+      <main className="authShell">
+        <section className="authIntro">
+          <div className="authMessage"><p className="eyebrow">SEGURANÇA</p><h1>Não abrimos seus dados sem validar a sessão.</h1></div>
+        </section>
+        <section className="authPanel">
+          <p className="formError" role="alert">{mfaError}</p>
+          <div className="mfaBoundaryActions">
+            <button type="button" onClick={() => refreshMfaStatus()}>Tentar novamente</button>
+            <button className="authSecondaryButton" type="button" onClick={onLogout}>Sair desta conta</button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (mfaRequired) {
+    return <MfaChallenge onVerified={refreshMfaStatus} onLogout={onLogout} />;
+  }
+
+  return (
+    <>
+      {children}
+      {!mfaEnrolled && session?.user?.id && <MfaOffer userId={session.user.id} />}
+    </>
   );
 }
 
@@ -1357,6 +1401,7 @@ const emptyCommitment = {
 };
 
 export function SettingsView({ session, sessionGeneration, accountName, onLogout }) {
+  const { refreshMfaStatus } = useSession();
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState({ auto_confirm_income: false, default_due_rule: "fixed_day", default_business_day_number: 5, opening_period: "", opening_balance: "" });
   const [loading, setLoading] = useState(true);
@@ -1426,7 +1471,8 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
         </header>
 
         <div className="settingsLayout">
-          <form className="settingsMain" onSubmit={saveSettings}>
+          <div className="settingsMain">
+          <form className="settingsPreferencesForm" onSubmit={saveSettings}>
             <section className="settingsIntro">
               <p className="eyebrow">PREFERÊNCIAS</p>
               <h2>Pequenos parâmetros. Mais clareza.</h2>
@@ -1489,6 +1535,8 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
             {notice && <p className="notice" role="status">{notice}</p>}
             <div className="settingsActions"><span>{loading ? "Carregando preferências..." : settings ? "Preferências salvas por usuário." : ""}</span><button className="confirmButton" type="submit" disabled={busy || loading}>{busy ? "Salvando..." : "Salvar configurações"}</button></div>
           </form>
+          <MfaSettings refreshMfaStatus={refreshMfaStatus} />
+          </div>
 
           <aside className="settingsSummary" aria-labelledby="settings-summary-title">
             <ResponsiveDetails label="Resumo das configurações">
@@ -2750,11 +2798,23 @@ export function AuthenticatedPage({ View }) {
     return <Login email={email} password={password} setEmail={setEmail} setPassword={setPassword} onSubmit={handleLogin} error={providerAuthError || authError} busy={authBusy} />;
   }
 
-  return <View session={session} sessionGeneration={sessionGeneration} accountName={session.user.email?.split("@")[0] || "Conta pessoal"} onLogout={handleLogout} />;
+  return (
+    <SecureSessionBoundary onLogout={handleLogout}>
+      <View session={session} sessionGeneration={sessionGeneration} accountName={session.user.email?.split("@")[0] || "Conta pessoal"} onLogout={handleLogout} />
+    </SecureSessionBoundary>
+  );
 }
 
 export default function Home({ view = "dashboard" }) {
-  const { session, authReady, authError: providerAuthError, sessionGeneration } = useSession();
+  const {
+    session,
+    authReady,
+    authError: providerAuthError,
+    sessionGeneration,
+    mfaReady,
+    mfaRequired,
+    mfaError,
+  } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -2782,9 +2842,9 @@ export default function Home({ view = "dashboard" }) {
 
   useEffect(() => {
     if (view !== "dashboard") return;
-    if (session) loadDashboard(session, selectedPeriod);
+    if (session && mfaReady && !mfaRequired && !mfaError) loadDashboard(session, selectedPeriod);
     else setDashboard(null);
-  }, [sessionGeneration, view, selectedPeriod.year, selectedPeriod.month]);
+  }, [sessionGeneration, view, selectedPeriod.year, selectedPeriod.month, mfaReady, mfaRequired, mfaError]);
 
   async function handleLogin(captchaToken) {
     setAuthBusy(true);
@@ -2825,32 +2885,34 @@ export default function Home({ view = "dashboard" }) {
 
   const accountName = session.user.email?.split("@")[0] || "Conta pessoal";
 
+  const protect = (content) => <SecureSessionBoundary onLogout={handleLogout}>{content}</SecureSessionBoundary>;
+
   if (view === "register") {
-    return <RegisterView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<RegisterView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "categories") {
-    return <CategoriesView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<CategoriesView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "planning") {
-    return <PlanningView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<PlanningView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "simulator") {
-    return <SimulatorView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<SimulatorView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "budget") {
-    return <BudgetView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<BudgetView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "settings") {
-    return <SettingsView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<SettingsView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   if (view === "data") {
-    return <DataView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />;
+    return protect(<DataView session={session} sessionGeneration={sessionGeneration} accountName={accountName} onLogout={handleLogout} />);
   }
 
   const current = dashboard?.current || { opening_balance: 0, income: 0, expenses: 0, ending_balance: 0, available: 0 };
@@ -2858,7 +2920,7 @@ export default function Home({ view = "dashboard" }) {
   const currentUsed = current.income ? Math.min(100, Math.round((current.expenses / current.income) * 100)) : 0;
   const nextUsed = next.income ? Math.min(100, Math.round((next.expenses / next.income) * 100)) : 0;
   const movements = dashboard?.recent_transactions || [];
-  return (
+  return protect(
     <main className="shell">
       <Sidebar active="dashboard" accountName={accountName} onLogout={handleLogout} />
 
