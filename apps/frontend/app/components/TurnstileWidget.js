@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 export default function TurnstileWidget({
   onVerify,
   resetKey = 0,
+  action = "login",
 }) {
   const containerRef = useRef(null);
   const widgetIdRef = useRef(null);
@@ -29,7 +30,7 @@ export default function TurnstileWidget({
         sitekey: siteKey,
         theme: "dark",
         size: "flexible",
-        action: "login",
+        action,
         callback: (token) => onVerify(token),
         "expired-callback": () => onVerify(""),
         "error-callback": () => onVerify(""),
@@ -45,7 +46,7 @@ export default function TurnstileWidget({
         widgetIdRef.current = null;
       }
     };
-  }, [scriptReady, siteKey, onVerify, resetKey]);
+  }, [scriptReady, siteKey, onVerify, resetKey, action]);
 
   if (!siteKey) {
     return (

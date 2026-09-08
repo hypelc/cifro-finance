@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { getSupabaseBrowserClient } from "../../lib/supabase";
 
 const PASSWORD_PATTERN =
@@ -10,8 +11,57 @@ export default function RedefinirSenhaPage() {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
+  const [linkError, setLinkError] = useState("");
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [canReset, setCanReset] = useState(false);
   const [success, setSuccess] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const queryParams = new URLSearchParams(window.location.search);
+
+    const errorCode =
+      hashParams.get("error_code") ||
+      queryParams.get("error_code") ||
+      hashParams.get("error") ||
+      queryParams.get("error");
+
+    if (errorCode) {
+      const expiredCodes = new Set([
+        "otp_expired",
+        "flow_state_expired",
+        "flow_state_not_found",
+      ]);
+
+      setLinkError(
+        expiredCodes.has(errorCode)
+          ? "Este link expirou ou já foi utilizado."
+          : "Não foi possível validar este link de recuperação.",
+      );
+      setCheckingSession(false);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+
+    let active = true;
+
+    getSupabaseBrowserClient()
+      .auth.getUser()
+      .then(({ data, error: userError }) => {
+        if (!active) return;
+        if (userError || !data.user) {
+          setLinkError("Abra um link de recuperação válido para redefinir sua senha.");
+        } else {
+          setCanReset(true);
+        }
+        setCheckingSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -79,12 +129,30 @@ export default function RedefinirSenhaPage() {
           </p>
         </div>
 
-        {success ? (
+        {checkingSession ? (
+          <p className="authHint">Validando o link de recuperação...</p>
+        ) : linkError ? (
           <div>
-            <p>Senha alterada. Todas as sessões foram encerradas.</p>
-            <a href="/">Voltar para o login</a>
+            <p className="formError" role="alert">
+              {linkError}
+            </p>
+            <div className="authResultActions">
+              <Link className="authTextLink" href="/esqueci-senha">
+                Solicitar novo link
+              </Link>
+              <Link className="authTextLink" href="/">
+                Voltar para o login
+              </Link>
+            </div>
           </div>
-        ) : (
+        ) : success ? (
+          <div className="authResult">
+            <p className="formSuccess" role="status">
+              Senha alterada. Todas as sessões foram encerradas.
+            </p>
+            <Link className="authTextLink" href="/">Voltar para o login</Link>
+          </div>
+        ) : canReset ? (
           <form className="authForm" onSubmit={handleSubmit}>
             <label htmlFor="new-password">Nova senha</label>
             <input
@@ -93,6 +161,7 @@ export default function RedefinirSenhaPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="new-password"
+              minLength={8}
               required
             />
 
@@ -103,6 +172,7 @@ export default function RedefinirSenhaPage() {
               value={confirmation}
               onChange={(event) => setConfirmation(event.target.value)}
               autoComplete="new-password"
+              minLength={8}
               required
             />
 
@@ -116,7 +186,7 @@ export default function RedefinirSenhaPage() {
               {busy ? "Alterando..." : "Alterar senha"}
             </button>
           </form>
-        )}
+        ) : null}
       </section>
     </main>
   );

@@ -188,6 +188,13 @@ h2 { margin: 0; font-size: 21px; letter-spacing: -.6px; }
 .authForm button { min-height: 48px; margin-top: 15px; border: 0; border-radius: 5px; color: white; background: #6685ed; font-size: 14px; font-weight: 800; cursor: pointer; }
 .authForm button:hover { background: #7895fb; }
 .authForm button:disabled { opacity: .65; cursor: wait; }
+.authActions { display: flex; justify-content: flex-end; margin-top: 3px; }
+.authAlternate { margin: 12px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+.authTextLink { color: var(--blue-bright); font-size: 12px; font-weight: 700; }
+.authTextLink:hover { text-decoration: underline; }
+.authResult { display: grid; gap: 18px; }
+.authResultActions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 18px; }
+.formSuccess { margin: 8px 0 0; color: var(--green); font-size: 13px; line-height: 1.6; }
 .formError { margin: 8px 0 0; color: var(--red); font-size: 12px; line-height: 1.5; }
 .authLoading { display: grid; min-height: 100vh; place-items: center; color: var(--muted); background: var(--navy-deep); font-size: 13px; }
 .emptyState { margin: 22px 0; color: #8d98ad; font-size: 13px; line-height: 1.6; }

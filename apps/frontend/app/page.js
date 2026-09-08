@@ -246,6 +246,22 @@ function BrandIdentity() {
   );
 }
 
+function loginErrorMessage(error) {
+  if (error?.code === "invalid_credentials") {
+    return "E-mail ou senha inválidos.";
+  }
+  if (error?.code === "email_not_confirmed") {
+    return "Confirme seu e-mail antes de entrar.";
+  }
+  if (error?.code === "captcha_failed") {
+    return "A verificação de segurança falhou. Tente novamente.";
+  }
+  if (error?.code === "over_request_rate_limit") {
+    return "Muitas tentativas foram feitas. Aguarde antes de tentar novamente.";
+  }
+  return "Não foi possível entrar agora. Tente novamente.";
+}
+
 export function Login({ email, password, setEmail, setPassword, onSubmit, error, busy }) {
 
   const [captchaToken, setCaptchaToken] = useState("");
@@ -301,14 +317,26 @@ export function Login({ email, password, setEmail, setPassword, onSubmit, error,
             autoComplete="current-password"
             required
           />
-            <TurnstileWidget
+          <div className="authActions">
+            <Link className="authTextLink" href="/esqueci-senha">
+              Esqueci minha senha
+            </Link>
+          </div>
+          <TurnstileWidget
             onVerify={setCaptchaToken}
             resetKey={captchaResetKey}
-/>
+            action="login"
+          />
           {error && <p className="formError" role="alert">{error}</p>}
           <button type="submit" disabled={busy || !captchaToken}>
             {busy ? "Entrando..." : "Entrar"}
           </button>
+          <p className="authAlternate">
+            Ainda não possui uma conta?{" "}
+            <Link className="authTextLink" href="/cadastro">
+              Criar conta
+            </Link>
+          </p>
         </form>
       </section>
     </main>
@@ -2705,9 +2733,9 @@ export function AuthenticatedPage({ View }) {
     try {
       const supabase = getSupabaseBrowserClient();
       const { error } = await supabase.auth.signInWithPassword({ email, password, options: { captchaToken } });
-      if (error) setAuthError(error.message);
-    } catch (error) {
-      setAuthError(error.message);
+      if (error) setAuthError(loginErrorMessage(error));
+    } catch {
+      setAuthError("Não foi possível entrar agora. Tente novamente.");
     } finally {
       setAuthBusy(false);
     }
@@ -2764,9 +2792,9 @@ export default function Home({ view = "dashboard" }) {
     try {
       const supabase = getSupabaseBrowserClient();
       const { error } = await supabase.auth.signInWithPassword({ email, password, options: { captchaToken } });
-      if (error) setAuthError(error.message);
-    } catch (error) {
-      setAuthError(error.message);
+      if (error) setAuthError(loginErrorMessage(error));
+    } catch {
+      setAuthError("Não foi possível entrar agora. Tente novamente.");
     } finally {
       setAuthBusy(false);
     }
