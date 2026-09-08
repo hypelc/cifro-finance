@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { useState } from "react";
 import { getSupabaseBrowserClient } from "../../lib/supabase";
+import { isPasswordValid, PASSWORD_REQUIREMENT_TEXT } from "../../lib/password";
+import PasswordRequirements from "../components/PasswordRequirements";
 import TurnstileWidget from "../components/TurnstileWidget";
-
-const PASSWORD_PATTERN =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
 function signUpErrorMessage(error) {
   if (error?.code === "weak_password") {
@@ -16,7 +15,7 @@ function signUpErrorMessage(error) {
     return "A verificação de segurança falhou. Tente novamente.";
   }
   if (error?.code === "over_email_send_rate_limit") {
-    return "Muitas solicitações foram feitas. Aguarde antes de tentar novamente.";
+    return "O limite temporário de envio de e-mails foi atingido. Tente novamente mais tarde.";
   }
   return "Não foi possível criar a conta agora. Revise os dados e tente novamente.";
 }
@@ -37,8 +36,8 @@ export default function CadastroPage() {
 
     setError("");
 
-    if (!PASSWORD_PATTERN.test(password)) {
-      setError("Use 8 caracteres ou mais, com maiúscula, minúscula, número e símbolo.");
+    if (!isPasswordValid(password)) {
+      setError(PASSWORD_REQUIREMENT_TEXT);
       return;
     }
 
@@ -89,7 +88,7 @@ export default function CadastroPage() {
           <p className="eyebrow">CADASTRO</p>
           <h2 id="signup-title">Criar conta</h2>
           <p className="authHint">
-            A senha deve ter 8 caracteres ou mais, com maiúscula, minúscula, número e símbolo.
+            Confirme seu e-mail para liberar o primeiro acesso.
           </p>
         </div>
 
@@ -122,6 +121,7 @@ export default function CadastroPage() {
               minLength={8}
               required
             />
+            <PasswordRequirements password={password} />
 
             <label htmlFor="signup-password-confirmation">Confirmar senha</label>
             <input

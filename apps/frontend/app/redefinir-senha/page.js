@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { isPasswordValid, PASSWORD_REQUIREMENT_TEXT } from "../../lib/password";
 import { getSupabaseBrowserClient } from "../../lib/supabase";
-
-const PASSWORD_PATTERN =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+import PasswordRequirements from "../components/PasswordRequirements";
 
 export default function RedefinirSenhaPage() {
   const [password, setPassword] = useState("");
@@ -67,10 +66,8 @@ export default function RedefinirSenhaPage() {
     event.preventDefault();
     setError("");
 
-    if (!PASSWORD_PATTERN.test(password)) {
-      setError(
-        "Use pelo menos 8 caracteres, com maiúscula, minúscula, número e símbolo."
-      );
+    if (!isPasswordValid(password)) {
+      setError(PASSWORD_REQUIREMENT_TEXT);
       return;
     }
 
@@ -125,7 +122,7 @@ export default function RedefinirSenhaPage() {
           <p className="eyebrow">RECUPERAÇÃO</p>
           <h2 id="reset-title">Redefinir senha</h2>
           <p className="authHint">
-            Use pelo menos 8 caracteres, com maiúscula, minúscula, número e símbolo.
+            Defina uma senha diferente da utilizada anteriormente.
           </p>
         </div>
 
@@ -164,6 +161,7 @@ export default function RedefinirSenhaPage() {
               minLength={8}
               required
             />
+            <PasswordRequirements password={password} />
 
             <label htmlFor="confirm-password">Confirmar nova senha</label>
             <input

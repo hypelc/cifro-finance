@@ -10,7 +10,7 @@ function recoveryErrorMessage(error) {
     return "A verificação de segurança falhou. Tente novamente.";
   }
   if (error?.code === "over_email_send_rate_limit") {
-    return "Muitas solicitações foram feitas. Aguarde antes de tentar novamente.";
+    return "O limite temporário de envio de e-mails foi atingido. Tente novamente mais tarde.";
   }
   return "Não foi possível processar a solicitação agora. Tente novamente.";
 }

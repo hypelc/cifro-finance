@@ -188,6 +188,11 @@ h2 { margin: 0; font-size: 21px; letter-spacing: -.6px; }
 .authForm button { min-height: 48px; margin-top: 15px; border: 0; border-radius: 5px; color: white; background: #6685ed; font-size: 14px; font-weight: 800; cursor: pointer; }
 .authForm button:hover { background: #7895fb; }
 .authForm button:disabled { opacity: .65; cursor: wait; }
+.passwordRequirements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; margin: 3px 0 2px; padding: 0; list-style: none; }
+.passwordRequirement { display: flex; align-items: center; gap: 6px; color: #7f899e; font-size: 11px; line-height: 1.4; }
+.passwordRequirement span { width: 13px; color: #657087; font-weight: 800; text-align: center; }
+.passwordRequirement.isMet { color: #a8cfc2; }
+.passwordRequirement.isMet span { color: var(--green); }
 .authActions { display: flex; justify-content: flex-end; margin-top: 3px; }
 .authAlternate { margin: 12px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 .authTextLink { color: var(--blue-bright); font-size: 12px; font-weight: 700; }
@@ -566,6 +571,7 @@ h2 { margin: 0; font-size: 21px; letter-spacing: -.6px; }
   .authMessage { margin-top: 70px; }
   .authMessage h1 { font-size: clamp(32px, 10vw, 48px); }
   .authPanel { width: 100%; padding: 42px 24px 56px; }
+  .passwordRequirements { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 850px) {
