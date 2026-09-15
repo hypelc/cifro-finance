@@ -1,5 +1,6 @@
 import "./globals.css";
 import { SessionProvider } from "./providers";
+import { ThemeProvider } from "./components/ThemeProvider";
 
 export const metadata = {
   title: "Cifro — seu dinheiro, à frente",
@@ -15,8 +16,8 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="pt-BR">
-      <body><SessionProvider>{children}</SessionProvider></body>
+    <html lang="pt-BR" suppressHydrationWarning>
+      <body><ThemeProvider><SessionProvider>{children}</SessionProvider></ThemeProvider></body>
     </html>
   );
 }

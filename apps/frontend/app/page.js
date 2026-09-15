@@ -9,6 +9,7 @@ import MfaChallenge from "./components/MfaChallenge";
 import MfaOffer from "./components/MfaOffer";
 import MfaSettings from "./components/MfaSettings";
 import TurnstileWidget from "./components/TurnstileWidget";
+import { useTheme } from "./components/ThemeProvider";
 
 const MAX_DESCRIPTION_LENGTH = 160;
 
@@ -163,6 +164,47 @@ function Progress({ value, label, detail, accent = false }) {
   );
 }
 
+function CategoryBarChart({ items = [], total = 0, projected = false }) {
+  const grouped = items.reduce((result, item) => {
+    if (item.direction !== "expense") return result;
+    const name = item.category_name || "Sem categoria";
+    result[name] = (result[name] || 0) + Number(item.amount || 0);
+    return result;
+  }, {});
+  const rows = Object.entries(grouped)
+    .sort(([, first], [, second]) => second - first)
+    .slice(0, 4);
+  const visibleTotal = rows.reduce((sum, [, amount]) => sum + amount, 0);
+  const denominator = Math.max(Number(total || 0), visibleTotal, 1);
+
+  if (!rows.length) {
+    return (
+      <div className="categoryChartEmpty">
+        <span className="emptyStateIcon" aria-hidden="true">∅</span>
+        <p>{projected ? "Os compromissos previstos aparecerão aqui quando houver planejamento." : "Registre uma movimentação para começar a enxergar seus gastos por categoria."}</p>
+        <Link href={projected ? "/planejamento" : "/registrar"}>{projected ? "Ver planejamento" : "Registrar movimentação"}<span aria-hidden="true">→</span></Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="categoryBarChart" aria-label={`${projected ? "Gastos previstos" : "Gastos recentes"} por categoria`}>
+      {rows.map(([name, amount]) => {
+        const percentage = Math.min(100, Math.round((amount / denominator) * 100));
+        return (
+          <div className="categoryBarRow" key={name}>
+            <div className="categoryBarMeta"><span>{name}</span><b>{formatCurrency(amount)}</b></div>
+            <div className="categoryBarTrack" role="progressbar" aria-label={`${name}: ${formatCurrency(amount)}`} aria-valuemin="0" aria-valuemax={denominator} aria-valuenow={amount}>
+              <span style={{ width: `${Math.max(percentage, 4)}%` }} />
+            </div>
+          </div>
+        );
+      })}
+      {Object.keys(grouped).length > 4 && <span className="categoryChartMore">+ {Object.keys(grouped).length - 4} outras categorias</span>}
+    </div>
+  );
+}
+
 function ResponsiveDetails({ label, children, className = "" }) {
   const [open, setOpen] = useState(false);
 
@@ -290,6 +332,20 @@ function BrandIdentity() {
   );
 }
 
+function NavIcon({ name }) {
+  const paths = {
+    dashboard: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+    register: "M12 5v14M5 12h14",
+    planning: "M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 5h12M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01",
+    simulator: "M5 4h14v16H5zM8 8h8M8 12h2M12 12h2M16 12h0M8 16h2M12 16h2M16 16h0",
+    budget: "M4 18V6M4 18h16M8 15v-4M12 15V8M16 15V5",
+    categories: "M5 5h14v14H5zM9 9h6v6H9z",
+    data: "M6 4h12v16H6zM9 8h6M9 12h6M9 16h4",
+    settings: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18.01 5.99l-1.42 1.42M7.41 16.59l-1.42 1.42M18.01 18.01l-1.42-1.42M7.41 7.41 5.99 5.99",
+  };
+  return <svg className="navIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d={paths[name] || paths.dashboard} /></svg>;
+}
+
 function loginErrorMessage(error) {
   if (error?.code === "invalid_credentials") {
     return "E-mail ou senha inválidos.";
@@ -413,14 +469,14 @@ function Sidebar({ active, accountName, onLogout }) {
       </Link>
 
       <nav className="mainNav" aria-label="Navegação principal">
-        <Link className={active === "dashboard" ? "navItem navPrimary active" : "navItem navPrimary"} href="/"><span className="navDesktopLabel">Visão geral</span><span className="navMobileLabel">Visão</span></Link>
-        <Link className={active === "register" ? "navItem navPrimary active" : "navItem navPrimary"} href="/registrar">Registrar</Link>
-        <Link className={active === "planning" ? "navItem navPrimary active" : "navItem navPrimary"} href="/planejamento"><span className="navDesktopLabel">Planejamento</span><span className="navMobileLabel">Planejar</span></Link>
-        <Link className={active === "simulator" ? "navItem navPrimary active" : "navItem navPrimary"} href="/simulador"><span className="navDesktopLabel">Simulador</span><span className="navMobileLabel">Simular</span></Link>
-        <Link className={active === "budget" ? "navItem navSecondary active" : "navItem navSecondary"} href="/distribuicao">Distribuição</Link>
-        <Link className={active === "categories" ? "navItem navSecondary active" : "navItem navSecondary"} href="/categorias">Categorias</Link>
-        <Link className={active === "data" ? "navItem navSecondary active" : "navItem navSecondary"} href="/dados">Dados</Link>
-        <Link className={active === "settings" ? "navItem navSecondary active" : "navItem navSecondary"} href="/configuracoes">Configurações</Link>
+        <Link className={active === "dashboard" ? "navItem navPrimary active" : "navItem navPrimary"} href="/" aria-current={active === "dashboard" ? "page" : undefined}><NavIcon name="dashboard" /><span className="navDesktopLabel">Visão geral</span><span className="navMobileLabel">Visão</span></Link>
+        <Link className={active === "register" ? "navItem navPrimary active" : "navItem navPrimary"} href="/registrar" aria-current={active === "register" ? "page" : undefined}><NavIcon name="register" /><span className="navDesktopLabel">Registrar</span><span className="navMobileLabel">Registrar</span></Link>
+        <Link className={active === "planning" ? "navItem navPrimary active" : "navItem navPrimary"} href="/planejamento" aria-current={active === "planning" ? "page" : undefined}><NavIcon name="planning" /><span className="navDesktopLabel">Planejamento</span><span className="navMobileLabel">Planejar</span></Link>
+        <Link className={active === "simulator" ? "navItem navPrimary active" : "navItem navPrimary"} href="/simulador" aria-current={active === "simulator" ? "page" : undefined}><NavIcon name="simulator" /><span className="navDesktopLabel">Simulador</span><span className="navMobileLabel">Simular</span></Link>
+        <Link className={active === "budget" ? "navItem navSecondary active" : "navItem navSecondary"} href="/distribuicao" aria-current={active === "budget" ? "page" : undefined}><NavIcon name="budget" /><span className="navDesktopLabel">Distribuição</span><span className="navMobileLabel">Distribuir</span></Link>
+        <Link className={active === "categories" ? "navItem navSecondary active" : "navItem navSecondary"} href="/categorias" aria-current={active === "categories" ? "page" : undefined}><NavIcon name="categories" /><span className="navDesktopLabel">Categorias</span><span className="navMobileLabel">Categorias</span></Link>
+        <Link className={active === "data" ? "navItem navSecondary active" : "navItem navSecondary"} href="/dados" aria-current={active === "data" ? "page" : undefined}><NavIcon name="data" /><span className="navDesktopLabel">Dados</span><span className="navMobileLabel">Dados</span></Link>
+        <Link className={active === "settings" ? "navItem navSecondary active" : "navItem navSecondary"} href="/configuracoes" aria-current={active === "settings" ? "page" : undefined}><NavIcon name="settings" /><span className="navDesktopLabel">Ajustes</span><span className="navMobileLabel">Ajustes</span></Link>
       </nav>
 
       <div className="account">
@@ -429,20 +485,19 @@ function Sidebar({ active, accountName, onLogout }) {
           <strong>{accountName}</strong>
           <span>Conta pessoal</span>
         </div>
-        <button className="moreButton" type="button" onClick={onLogout} aria-label="Sair">sair</button>
+        <button className="moreButton" type="button" onClick={onLogout} aria-label="Sair da conta">Sair</button>
       </div>
       </aside>
 
       <nav className="mobileBottomNav" aria-label="Navegação principal no celular" ref={mobileNavRef}>
-        <Link className={active === "dashboard" ? "navItem active" : "navItem"} href="/" aria-current={active === "dashboard" ? "page" : undefined}>Visão</Link>
-        <Link className={active === "register" ? "navItem active" : "navItem"} href="/registrar" aria-current={active === "register" ? "page" : undefined}>Registrar</Link>
-        <Link className={active === "planning" ? "navItem active" : "navItem"} href="/planejamento" aria-current={active === "planning" ? "page" : undefined}>Planejar</Link>
-        <Link className={active === "simulator" ? "navItem active" : "navItem"} href="/simulador" aria-current={active === "simulator" ? "page" : undefined}>Simular</Link>
-        <Link className={active === "budget" ? "navItem active" : "navItem"} href="/distribuicao" aria-current={active === "budget" ? "page" : undefined}>Distribuir</Link>
-        <Link className={active === "categories" ? "navItem active" : "navItem"} href="/categorias" aria-current={active === "categories" ? "page" : undefined}>Categorias</Link>
-        <Link className={active === "data" ? "navItem active" : "navItem"} href="/dados" aria-current={active === "data" ? "page" : undefined}>Dados</Link>
-        <Link className={active === "settings" ? "navItem active" : "navItem"} href="/configuracoes" aria-current={active === "settings" ? "page" : undefined}>Ajustes</Link>
-        <button className="navItem mobileLogoutNav" type="button" onClick={onLogout}>Sair</button>
+        <Link className={active === "dashboard" ? "navItem active" : "navItem"} href="/" aria-current={active === "dashboard" ? "page" : undefined}><NavIcon name="dashboard" /><span>Visão</span></Link>
+        <Link className={active === "register" ? "navItem active" : "navItem"} href="/registrar" aria-current={active === "register" ? "page" : undefined}><NavIcon name="register" /><span>Registrar</span></Link>
+        <Link className={active === "planning" ? "navItem active" : "navItem"} href="/planejamento" aria-current={active === "planning" ? "page" : undefined}><NavIcon name="planning" /><span>Planejar</span></Link>
+        <Link className={active === "simulator" ? "navItem active" : "navItem"} href="/simulador" aria-current={active === "simulator" ? "page" : undefined}><NavIcon name="simulator" /><span>Simular</span></Link>
+        <Link className={active === "budget" ? "navItem active" : "navItem"} href="/distribuicao" aria-current={active === "budget" ? "page" : undefined}><NavIcon name="budget" /><span>Distribuir</span></Link>
+        <Link className={active === "categories" ? "navItem active" : "navItem"} href="/categorias" aria-current={active === "categories" ? "page" : undefined}><NavIcon name="categories" /><span>Categorias</span></Link>
+        <Link className={active === "data" ? "navItem active" : "navItem"} href="/dados" aria-current={active === "data" ? "page" : undefined}><NavIcon name="data" /><span>Dados</span></Link>
+        <Link className={active === "settings" ? "navItem active" : "navItem"} href="/configuracoes" aria-current={active === "settings" ? "page" : undefined}><NavIcon name="settings" /><span>Ajustes</span></Link>
       </nav>
     </>
   );
@@ -1169,11 +1224,12 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
         </div>
 
         {pendingMovement && (
-          <form className="confirmationPanel" onSubmit={confirmMovement}>
+          <div className="responsiveModalOverlay" role="presentation">
+          <form className="confirmationPanel" role="dialog" aria-modal="true" aria-labelledby="register-confirmation-title" onSubmit={confirmMovement}>
             <div className="confirmationHeader">
               <div>
                 <p className="eyebrow">CONFIRME ANTES DE SALVAR</p>
-                <h3>Está tudo certo?</h3>
+                <h3 id="register-confirmation-title">Está tudo certo?</h3>
               </div>
               <button
                 className="cancelButton"
@@ -1258,14 +1314,16 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
               </button>
             </div>
           </form>
+          </div>
         )}
 
         {editingMovement && (
-          <form className="editPanel" onSubmit={saveEditedMovement}>
+          <div className="responsiveModalOverlay" role="presentation">
+          <form className="editPanel" role="dialog" aria-modal="true" aria-labelledby="edit-movement-title" onSubmit={saveEditedMovement}>
             <div className="confirmationHeader">
               <div>
                 <p className="eyebrow">EDITAR MOVIMENTAÇÃO</p>
-                <h3>Corrija o que for necessário.</h3>
+                <h3 id="edit-movement-title">Corrija o que for necessário.</h3>
               </div>
               <button className="cancelButton" type="button" onClick={cancelEditing}>Cancelar</button>
             </div>
@@ -1309,6 +1367,7 @@ export function RegisterView({ session, sessionGeneration, accountName, onLogout
               <button className="confirmButton" type="submit" disabled={editBusy}>{editBusy ? "Salvando..." : "Salvar alterações"}</button>
             </div>
           </form>
+          </div>
         )}
         {notice && <p className="notice" role="status">{notice}</p>}
 
@@ -1402,6 +1461,7 @@ const emptyCommitment = {
 
 export function SettingsView({ session, sessionGeneration, accountName, onLogout }) {
   const { refreshMfaStatus } = useSession();
+  const { preference: themePreference, setTheme } = useTheme();
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState({ auto_confirm_income: false, default_due_rule: "fixed_day", default_business_day_number: 5, opening_period: "", opening_balance: "" });
   const [loading, setLoading] = useState(true);
@@ -1477,6 +1537,21 @@ export function SettingsView({ session, sessionGeneration, accountName, onLogout
               <p className="eyebrow">PREFERÊNCIAS</p>
               <h2>Pequenos parâmetros. Mais clareza.</h2>
               <p>Estas escolhas orientam novos planejamentos e a futura automação do Cifro. Elas não alteram registros que já aconteceram.</p>
+            </section>
+
+            <section className="settingsSection appearanceSection" aria-labelledby="appearance-title">
+              <div className="settingsSectionHeading">
+                <div><p className="eyebrow">APARÊNCIA</p><h2 id="appearance-title">Escolha a luz da sua interface.</h2></div>
+              </div>
+              <div className="themeChoiceGroup" role="radiogroup" aria-label="Tema da interface">
+                {[['system', 'Sistema', 'Segue a preferência do aparelho.'], ['light', 'Claro', 'Fundo claro e superfícies leves.'], ['dark', 'Escuro', 'Grafite com acentos Cifro.']].map(([value, label, description]) => (
+                  <label className={themePreference === value ? "themeChoice isSelected" : "themeChoice"} key={value}>
+                    <input type="radio" name="theme" value={value} checked={themePreference === value} onChange={() => setTheme(value)} />
+                    <span className="themeChoiceIndicator" aria-hidden="true" />
+                    <span><strong>{label}</strong><small>{description}</small></span>
+                  </label>
+                ))}
+              </div>
             </section>
 
             <section className="settingsSection" aria-labelledby="automation-title">
@@ -2184,6 +2259,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState(emptyCommitment);
   const [editingId, setEditingId] = useState(null);
+  const [planningFormOpen, setPlanningFormOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [recordingId, setRecordingId] = useState(null);
@@ -2248,6 +2324,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
 
   function startEditing(commitment) {
     setEditingId(commitment.id);
+    setPlanningFormOpen(true);
     setForm({
       name: commitment.name,
       amount: String(commitment.amount),
@@ -2271,6 +2348,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
 
   function cancelEditing() {
     setEditingId(null);
+    setPlanningFormOpen(false);
     setForm(emptyCommitment);
     setNotice("");
   }
@@ -2349,6 +2427,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
         : [saved, ...current]);
       if (!(await loadPlanning({ showError: false }))) setNotice("Compromisso salvo. A lista será atualizada quando a API voltar.");
       setEditingId(null);
+      setPlanningFormOpen(false);
       setForm({
         ...emptyCommitment,
         due_rule: settings?.default_due_rule || "fixed_day",
@@ -2429,15 +2508,16 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
             <section className="planningIntro">
               <h2>Antecipe cobranças, parcelas e recebimentos.</h2>
               <p>Cadastre uma vez o que se repete. O Cifro projeta a ocorrência no próximo mês sem duplicar registros reais.</p>
+              <button className="secondaryButton planningFormTrigger" type="button" onClick={() => { setEditingId(null); setForm({ ...emptyCommitment, due_rule: settings?.default_due_rule || "fixed_day", business_day_number: String(settings?.default_business_day_number || 5) }); setPlanningFormOpen(true); }}>Novo compromisso <span aria-hidden="true">+</span></button>
             </section>
 
-            <form className="planningForm" onSubmit={saveCommitment}>
+            {planningFormOpen && <div className="responsiveModalOverlay planningFormOverlay" role="presentation"><form className="planningForm" role="dialog" aria-modal="true" aria-labelledby="planning-form-title" onSubmit={saveCommitment}>
               <div className="planningFormHeader">
                 <div>
                   <p className="eyebrow">{editingId ? "EDITAR" : "NOVO PLANEJAMENTO"}</p>
-                  <h3>{editingId ? "Ajuste este compromisso." : "O que deve entrar no futuro?"}</h3>
+                  <h3 id="planning-form-title">{editingId ? "Ajuste este compromisso." : "O que deve entrar no futuro?"}</h3>
                 </div>
-                {editingId && <button className="cancelButton" type="button" onClick={cancelEditing}>Cancelar edição</button>}
+                <button className="cancelButton" type="button" onClick={cancelEditing}>Fechar</button>
               </div>
 
               <div className="planningFields">
@@ -2526,7 +2606,7 @@ export function PlanningView({ session, sessionGeneration, accountName, onLogout
                 {editingId && <span>As alterações valem para as próximas projeções.</span>}
                 <button className="confirmButton" type="submit" disabled={busy}>{busy ? "Salvando..." : editingId ? "Salvar alterações" : "Adicionar ao planejamento"}</button>
               </div>
-            </form>
+            </form></div>}
 
             <section className="commitmentListSection" aria-labelledby="commitment-list-title">
               <div className="sectionHeader">
@@ -2577,6 +2657,7 @@ export function CategoriesView({ session, sessionGeneration, accountName, onLogo
   const [name, setName] = useState("");
   const [kind, setKind] = useState("expense");
   const [busy, setBusy] = useState(false);
+  const [categoryFormOpen, setCategoryFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState("");
   const [editingKind, setEditingKind] = useState("expense");
@@ -2611,6 +2692,7 @@ export function CategoriesView({ session, sessionGeneration, accountName, onLogo
       });
       setCategories((current) => [...current, category].sort((a, b) => a.name.localeCompare(b.name)));
       setName("");
+      setCategoryFormOpen(false);
       setNotice(`Categoria “${category.name}” criada`);
     } catch (error) {
       setNotice(error.message);
@@ -2687,9 +2769,11 @@ export function CategoriesView({ session, sessionGeneration, accountName, onLogo
           <p className="eyebrow">CATEGORIAS</p>
           <h2>Nomeie o que se repete na sua vida financeira.</h2>
           <p>Use categorias próprias para encontrar sentido nos registros, sem criar uma taxonomia enorme.</p>
+          <button className="secondaryButton categoryFormTrigger" type="button" onClick={() => setCategoryFormOpen(true)}>Nova categoria <span aria-hidden="true">+</span></button>
         </section>
 
-        <form className="categoryCreate" onSubmit={createCategory}>
+        {categoryFormOpen && <div className="responsiveModalOverlay categoryFormOverlay" role="presentation"><form className="categoryCreate" role="dialog" aria-modal="true" aria-labelledby="category-form-title" onSubmit={createCategory}>
+          <div className="categoryFormHeader"><div><p className="eyebrow">NOVA CATEGORIA</p><h3 id="category-form-title">Dê um nome ao que se repete.</h3></div><button className="cancelButton" type="button" onClick={() => setCategoryFormOpen(false)}>Fechar</button></div>
           <div>
             <label htmlFor="new-category-name">Nova categoria</label>
             <input id="new-category-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Alimentação" maxLength={80} />
@@ -2704,7 +2788,7 @@ export function CategoriesView({ session, sessionGeneration, accountName, onLogo
             </select>
           </div>
           <button className="confirmButton" type="submit" disabled={busy || !name.trim()}>{busy ? "Salvando..." : "Adicionar categoria"}</button>
-        </form>
+        </form></div>}
 
         {notice && <p className="notice" role="status">{notice}</p>}
 
@@ -2823,6 +2907,7 @@ export default function Home({ view = "dashboard" }) {
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [notice, setNotice] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState(currentPeriod);
+  const [monthView, setMonthView] = useState("current");
   const dashboardRequestRef = useRef(0);
 
   async function loadDashboard(activeSession = session, period = selectedPeriod) {
@@ -2927,24 +3012,33 @@ export default function Home({ view = "dashboard" }) {
       <section className="content" id="overview">
         <header className="topbar">
           <div>
+            <p className="eyebrow">VISÃO GERAL</p>
             <h1>Seu dinheiro, à frente.</h1>
-          </div>
-          <div className="periodControls" aria-label="Selecionar mês da visão geral">
-            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, -1))} aria-label="Mês anterior">←</button>
-            <input type="month" value={periodInputValue(selectedPeriod.year, selectedPeriod.month)} onChange={(event) => setSelectedPeriod(periodFromInput(event.target.value))} />
-            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, 1))} aria-label="Próximo mês">→</button>
-            <button className="periodToday" type="button" onClick={() => setSelectedPeriod(currentPeriod())}>Hoje</button>
           </div>
         </header>
 
+        <div className="overviewControls">
+          <div className="monthSegmentedControl" role="tablist" aria-label="Período da visão geral">
+            <button className={monthView === "current" ? "isSelected" : ""} type="button" role="tab" aria-selected={monthView === "current"} onClick={() => setMonthView("current")}>Este mês</button>
+            <button className={monthView === "next" ? "isSelected" : ""} type="button" role="tab" aria-selected={monthView === "next"} onClick={() => setMonthView("next")}>Próximo mês</button>
+          </div>
+          <div className="periodControls" aria-label="Mudar mês de referência">
+            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, -1))} aria-label="Mês anterior">←</button>
+            <span className="periodReference">{formatMonthYear(selectedPeriod.year, selectedPeriod.month)}</span>
+            <button type="button" onClick={() => setSelectedPeriod((period) => shiftPeriod(period, 1))} aria-label="Próximo mês">→</button>
+            <button className="periodToday" type="button" onClick={() => setSelectedPeriod(currentPeriod())}>Hoje</button>
+          </div>
+        </div>
+
         <section className="comparison" aria-labelledby="comparison-title">
           <div className="sectionIntro">
-            <span id="comparison-title">Agora e depois</span>
+            <span id="comparison-title">{monthView === "next" ? "Próximo mês" : "Este mês"}</span>
             {loadingDashboard && <span>Atualizando</span>}
           </div>
 
+          <div className="overviewMainGrid">
           <div className="comparisonGrid">
-            <article className="monthPanel currentPanel">
+            <article className={monthView === "current" ? "monthPanel currentPanel isSelected" : "monthPanel currentPanel"}>
               <div className="monthHeading"><span>{formatMonth(dashboard?.month)}</span><small>mês consultado</small></div>
               <p className="metricLabel">Saldo calculado</p>
               <Money>{formatCurrency(current.ending_balance)}</Money>
@@ -2975,9 +3069,7 @@ export default function Home({ view = "dashboard" }) {
               )}
             </article>
 
-            <div className="comparisonRail" aria-hidden="true"><span>→</span></div>
-
-            <article className="monthPanel nextPanel" id="planning">
+            <article className={monthView === "next" ? "monthPanel nextPanel isSelected" : "monthPanel nextPanel"} id="planning">
               <div className="monthHeading"><span>{formatMonth(dashboard?.next_month)}</span><small>próxima projeção</small></div>
               <p className="metricLabel">Saldo projetado</p>
               <Money accent>{formatCurrency(next.ending_balance)}</Money>
@@ -2987,6 +3079,13 @@ export default function Home({ view = "dashboard" }) {
                 <div><span>Saídas previstas</span><b>{formatCurrency(next.expenses)}</b></div>
               </div>
               <Progress value={nextUsed} label={`${nextUsed}% comprometido`} detail={`${dashboard?.next_month_commitments?.length || 0} itens previstos`} accent />
+              {next.ending_balance < 0 && (
+                <div className="financialAlert" role="alert">
+                  <strong>Faltariam {formatCurrency(Math.abs(next.ending_balance))}</strong>
+                  <span>Revise os compromissos previstos para este mês.</span>
+                  <Link href="/planejamento">Revisar planejamento <span aria-hidden="true">→</span></Link>
+                </div>
+              )}
               {dashboard?.next_month_commitments?.length ? (
                 <div className="commitmentPreview">
                   <div className="commitmentPreviewHeader"><span>Próximas cobranças</span><Link href="/planejamento">ver todas</Link></div>
@@ -3003,19 +3102,22 @@ export default function Home({ view = "dashboard" }) {
               )}
             </article>
           </div>
+
+          <section className="categoryChartSection" aria-labelledby="flow-title">
+            <div className="sectionHeader">
+              <div><p className="eyebrow">DISTRIBUIÇÃO DO MÊS</p><h2 id="flow-title">Gastos por categoria</h2></div>
+              <Link className="seeAll" href="/registrar">Ver registros <span aria-hidden="true">→</span></Link>
+            </div>
+            <CategoryBarChart
+              items={monthView === "next" ? (dashboard?.next_month_commitments || []) : movements}
+              total={monthView === "next" ? next.expenses : current.expenses}
+              projected={monthView === "next"}
+            />
+          </section>
+          </div>
         </section>
 
         <div className="lowerGrid">
-          <section className="flowSection" aria-labelledby="flow-title">
-            <div className="sectionHeader">
-              <h2 id="flow-title">Evolução mensal</h2>
-            </div>
-            <div className="flowEmpty">
-              <p>A comparação aparecerá quando houver pelo menos dois meses completos.</p>
-              <Link href="/registrar">Registrar movimentação <span>→</span></Link>
-            </div>
-          </section>
-
           <section className="recentSection" id="movements" aria-labelledby="recent-title">
             <div className="sectionHeader">
               <h2 id="recent-title">Movimentações recentes</h2>
